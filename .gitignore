@@ -1,0 +1,25 @@
+# Secretos y entornos (nunca versionar)
+.env
+config.env
+n8n/n8n.env
+whatsapp_render/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Herramientas / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Datos locales generados (opcional: descomentá si no querés el CSV en git)
+# propiedades_vivas.csv
