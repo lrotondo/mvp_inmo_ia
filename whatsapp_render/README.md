@@ -97,10 +97,11 @@ Probar:
 
 1. Crear **PostgreSQL** en Render y copiar **Internal Database URL** a `DATABASE_URL` del Web Service.
 2. New **Web Service** → carpeta `whatsapp_render`.
-3. **Build command:** `pip install -r requirements.txt`
-4. **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-5. Cargar variables de entorno (tabla de arriba).
-6. Deploy; configurar webhook en Meta.
+3. Version de Python: el repo incluye [`runtime.txt`](runtime.txt) (`3.12.8`) para evitar fallos de SQLAlchemy con Python 3.14 en Render.
+4. **Build command:** `pip install -r requirements.txt`
+5. **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+6. Cargar variables de entorno (tabla de arriba).
+7. Deploy; configurar webhook en Meta.
 
 ### Actualizar propiedades por tenant
 
