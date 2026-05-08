@@ -22,7 +22,8 @@ Servicio para responder WhatsApp con un solo backend:
 | `GROQ_API_KEY` | si | API key de Groq |
 | `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` |
 | `META_VERIFY_TOKEN` | si | Token que configuras en Meta para verificar webhook |
-| `META_APP_SECRET` | si | App Secret para validar firma del webhook |
+| `META_APP_SECRET` | si | **App Secret** (Basica de la app), no el Client Secret de Login |
+| `META_SKIP_SIGNATURE` | no | Si `1`, omite validacion de firma (solo depuracion) |
 | `META_GRAPH_VERSION` | no | Default: `v22.0` |
 | `META_ACCESS_TOKEN` | no | Fallback si no hay fila en `tenants` o falta `phone_number_id` |
 | `META_PHONE_NUMBER_ID` | no | Debe coincidir con el `phone_number_id` del webhook para usar fallback |
@@ -112,6 +113,16 @@ Subir CSV bajo `data/` o `data/tenants/` y setear `catalog_csv_path` en la fila 
 - Revisar conversaciones y limites en Meta por WABA.
 - `META_ACCESS_TOKEN` en DB es sensible: rotacion y acceso minimo.
 - Render free puede dormir el servicio (cold start).
+
+### Error `Firma Meta invalida` (403)
+
+La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la aplicacion** (no otro valor).
+
+1. En Meta Developers: **Tu app** → **Configuracion** → **Basica** → **Secreto de la aplicacion** (App Secret).  
+   No uses el **Secreto del cliente** de *Inicio de sesion con Facebook* / OAuth; es otro valor.
+2. En Render, variable **`META_APP_SECRET`**: pegar el secreto **sin comillas**; si al copiar quedaron comillas o un salto de linea al final, borralos y redeploy.
+3. Revisa logs: si `cabecera_X-Hub-Signature-256_longitud=0`, Meta no esta enviando la cabecera (proxy o ruta incorrecta).
+4. Solo para aislar el problema (nunca en produccion): `META_SKIP_SIGNATURE=1` confirma que el resto del flujo funciona; luego volve a validar firma con el App Secret correcto.
 
 ## Filtros soportados en el mensaje
 

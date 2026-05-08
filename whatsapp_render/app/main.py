@@ -149,7 +149,14 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         bool(signature),
     )
     if not validate_meta_signature(raw_body, signature):
-        logger.warning("Firma Meta rechazada (403).")
+        has_secret = bool(os.environ.get("META_APP_SECRET", "").strip())
+        logger.warning(
+            "Firma Meta rechazada (403): META_APP_SECRET configurado=%s "
+            "cabecera_X-Hub-Signature-256_longitud=%s cuerpo_bytes=%s",
+            has_secret,
+            len(signature.strip()),
+            len(raw_body),
+        )
         raise HTTPException(status_code=403, detail="Firma Meta invalida")
 
     try:
