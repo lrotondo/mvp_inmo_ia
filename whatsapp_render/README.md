@@ -97,7 +97,7 @@ Probar:
 
 1. Crear **PostgreSQL** en Render y copiar **Internal Database URL** a `DATABASE_URL` del Web Service.
 2. New **Web Service** → carpeta `whatsapp_render`.
-3. Version de Python: el repo incluye [`runtime.txt`](runtime.txt) (`3.12.8`) para evitar fallos de SQLAlchemy con Python 3.14 en Render.
+3. Version de Python: usar **3.12.x** (no 3.14). El repo trae [`runtime.txt`](runtime.txt) con `3.12.8` y [`render.yaml`](render.yaml) define `PYTHON_VERSION=3.12.8`. Si el servicio no usa Blueprint, en el dashboard de Render agrega env var **`PYTHON_VERSION`** = `3.12.8` (o desactiva override a 3.14).
 4. **Build command:** `pip install -r requirements.txt`
 5. **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 6. Cargar variables de entorno (tabla de arriba).
