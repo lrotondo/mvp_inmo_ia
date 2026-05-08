@@ -19,6 +19,17 @@ from app.tenant_service import TenantContext, fetch_tenant_context
 
 logger = logging.getLogger(__name__)
 
+
+def _configure_logging() -> None:
+    """Render muestra stdout; aseguramos nivel INFO para el paquete `app`."""
+    fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=logging.INFO, format=fmt)
+    for name in ("app", "app.main", "app.db", "app.tenant_service", "app.meta_client"):
+        logging.getLogger(name).setLevel(logging.INFO)
+
+
 DEFAULT_SYSTEM_PROMPT = (
     "Sos un asesor inmobiliario experto en Tandil y zona. "
     "Responde cordial y breve por WhatsApp. "
@@ -28,7 +39,9 @@ DEFAULT_SYSTEM_PROMPT = (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _configure_logging()
     init_db()
+    logger.info("Arranque: db_engine=%s", "on" if get_engine() is not None else "off")
     yield
     dispose_engine()
 
@@ -130,15 +143,28 @@ def meta_webhook_verify(
 async def meta_webhook_post(request: Request) -> dict[str, bool]:
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
+    logger.info(
+        "POST /meta/whatsapp: body_bytes=%s signature_present=%s",
+        len(raw_body),
+        bool(signature),
+    )
     if not validate_meta_signature(raw_body, signature):
+        logger.warning("Firma Meta rechazada (403).")
         raise HTTPException(status_code=403, detail="Firma Meta invalida")
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("JSON invalido: %s", exc)
         raise HTTPException(status_code=400, detail="Payload invalido") from exc
 
     incoming = _extract_incoming_messages(payload)
+    logger.info("Mensajes de texto extraidos: %s", len(incoming))
+    if not incoming:
+        logger.info(
+            "Nada que procesar (sin mensajes text o payload solo status); "
+            "esto es normal en algunos eventos de Meta."
+        )
     for wa_id, user_text, pnid in incoming:
         ctx = await asyncio.to_thread(_resolve_tenant, pnid)
         if ctx is None:
@@ -148,6 +174,12 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 wa_id,
             )
             continue
+        logger.info(
+            "Procesando mensaje: tenant_phone_number_id=%s from_wa_id=%s text_len=%s",
+            ctx.phone_number_id,
+            wa_id,
+            len(user_text),
+        )
         system_prompt, user_prompt = _build_ai_answer(
             user_text,
             system_prompt_override=ctx.system_prompt,
@@ -165,6 +197,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             to_wa_id=wa_id,
             message=answer,
         )
+        logger.info("Respuesta enviada por Graph API a wa_id=%s", wa_id)
 
     return {"ok": True}
 
