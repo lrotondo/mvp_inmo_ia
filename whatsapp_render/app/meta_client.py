@@ -5,22 +5,26 @@ import os
 import httpx
 
 
-def _graph_api_url() -> str:
-    version = os.environ.get("META_GRAPH_VERSION", "v22.0").strip() or "v22.0"
-    phone_number_id = os.environ.get("META_PHONE_NUMBER_ID", "").strip()
-    if not phone_number_id:
-        raise RuntimeError("META_PHONE_NUMBER_ID no configurada")
-    return f"https://graph.facebook.com/{version}/{phone_number_id}/messages"
+def _graph_messages_url(phone_number_id: str, graph_version: str | None) -> str:
+    version = (graph_version or os.environ.get("META_GRAPH_VERSION", "v22.0")).strip() or "v22.0"
+    pid = phone_number_id.strip()
+    if not pid:
+        raise RuntimeError("phone_number_id vacio")
+    return f"https://graph.facebook.com/{version}/{pid}/messages"
 
 
-def _graph_access_token() -> str:
-    token = os.environ.get("META_ACCESS_TOKEN", "").strip()
+async def send_whatsapp_text_message(
+    *,
+    access_token: str,
+    phone_number_id: str,
+    to_wa_id: str,
+    message: str,
+    graph_version: str | None = None,
+) -> None:
+    token = access_token.strip()
     if not token:
-        raise RuntimeError("META_ACCESS_TOKEN no configurada")
-    return token
+        raise RuntimeError("access_token vacio")
 
-
-async def send_whatsapp_text_message(to_wa_id: str, message: str) -> None:
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -32,10 +36,11 @@ async def send_whatsapp_text_message(to_wa_id: str, message: str) -> None:
         },
     }
     headers = {
-        "Authorization": f"Bearer {_graph_access_token()}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
+    url = _graph_messages_url(phone_number_id, graph_version)
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(_graph_api_url(), headers=headers, json=payload)
+        response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()

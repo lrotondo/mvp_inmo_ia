@@ -1,28 +1,81 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from app.catalog import filter_properties, format_catalog, load_properties
+from app.catalog import filter_properties, format_catalog, load_properties_for_catalog_path
+from app.db import dispose_engine, get_engine, init_db
 from app.groq_client import chat_completion
 from app.meta_auth import validate_meta_signature, validate_meta_verify_token
 from app.meta_client import send_whatsapp_text_message
+from app.tenant_service import TenantContext, fetch_tenant_context
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SYSTEM_PROMPT = (
+    "Sos un asesor inmobiliario experto en Tandil y zona. "
+    "Responde cordial y breve por WhatsApp. "
+    "Solo usa datos del catalogo. Si no alcanza, decilo y no inventes."
+)
 
 
-app = FastAPI(title="WhatsApp Inmobiliaria MVP")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+    dispose_engine()
+
+
+app = FastAPI(title="WhatsApp Inmobiliaria MVP", lifespan=lifespan)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "db": "on" if get_engine() is not None else "off"}
 
 
-def _build_ai_answer(user_text: str) -> tuple[str, str]:
+def _legacy_tenant_context() -> TenantContext | None:
+    token = os.environ.get("META_ACCESS_TOKEN", "").strip()
+    pid = os.environ.get("META_PHONE_NUMBER_ID", "").strip()
+    if not token or not pid:
+        return None
+    return TenantContext(
+        phone_number_id=pid,
+        access_token=token,
+        name=None,
+        system_prompt=None,
+        catalog_csv_path=None,
+    )
+
+
+def _resolve_tenant(phone_number_id: str) -> TenantContext | None:
+    if phone_number_id.strip():
+        ctx = fetch_tenant_context(phone_number_id)
+        if ctx is not None:
+            return ctx
+    leg = _legacy_tenant_context()
+    if leg is None:
+        return None
+    if not phone_number_id.strip() or phone_number_id.strip() == leg.phone_number_id:
+        return leg
+    return None
+
+
+def _build_ai_answer(
+    user_text: str,
+    *,
+    system_prompt_override: str | None,
+    catalog_csv_path: str | None,
+) -> tuple[str, str]:
     text = user_text.strip()
-    rows = load_properties()
+    rows = load_properties_for_catalog_path(catalog_csv_path)
     hits = filter_properties(text, rows)
     catalog = format_catalog(hits)
     if not catalog:
@@ -31,11 +84,7 @@ def _build_ai_answer(user_text: str) -> tuple[str, str]:
             "propon ampliar criterios.)"
         )
 
-    system_prompt = (
-        "Sos un asesor inmobiliario experto en Tandil y zona. "
-        "Responde cordial y breve por WhatsApp. "
-        "Solo usa datos del catalogo. Si no alcanza, decilo y no inventes."
-    )
+    system_prompt = (system_prompt_override or "").strip() or DEFAULT_SYSTEM_PROMPT
     user_prompt = (
         f"Consulta del cliente: {text}\n\n"
         f"Catalogo (hasta 3 opciones):\n{catalog}"
@@ -43,13 +92,15 @@ def _build_ai_answer(user_text: str) -> tuple[str, str]:
     return system_prompt, user_prompt
 
 
-def _extract_incoming_messages(payload: dict[str, Any]) -> list[tuple[str, str]]:
-    incoming: list[tuple[str, str]] = []
+def _extract_incoming_messages(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
+    incoming: list[tuple[str, str, str]] = []
     entries = payload.get("entry") or []
     for entry in entries:
         changes = entry.get("changes") or []
         for change in changes:
             value = change.get("value") or {}
+            metadata = value.get("metadata") or {}
+            phone_number_id = str(metadata.get("phone_number_id") or "").strip()
             contacts = value.get("contacts") or []
             contact_wa_id = str((contacts[0] or {}).get("wa_id", "")) if contacts else ""
             messages = value.get("messages") or []
@@ -60,7 +111,7 @@ def _extract_incoming_messages(payload: dict[str, Any]) -> list[tuple[str, str]]
                     continue
                 body = str((msg.get("text") or {}).get("body", "")).strip()
                 if sender and body:
-                    incoming.append((sender, body))
+                    incoming.append((sender, body, phone_number_id))
     return incoming
 
 
@@ -88,15 +139,32 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=400, detail="Payload invalido") from exc
 
     incoming = _extract_incoming_messages(payload)
-    for wa_id, user_text in incoming:
-        system_prompt, user_prompt = _build_ai_answer(user_text)
+    for wa_id, user_text, pnid in incoming:
+        ctx = await asyncio.to_thread(_resolve_tenant, pnid)
+        if ctx is None:
+            logger.warning(
+                "Sin tenant para phone_number_id=%r (from=%r); mensaje ignorado.",
+                pnid,
+                wa_id,
+            )
+            continue
+        system_prompt, user_prompt = _build_ai_answer(
+            user_text,
+            system_prompt_override=ctx.system_prompt,
+            catalog_csv_path=ctx.catalog_csv_path,
+        )
         answer = await chat_completion(
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
         )
-        await send_whatsapp_text_message(to_wa_id=wa_id, message=answer)
+        await send_whatsapp_text_message(
+            access_token=ctx.access_token,
+            phone_number_id=ctx.phone_number_id,
+            to_wa_id=wa_id,
+            message=answer,
+        )
 
     return {"ok": True}
 
