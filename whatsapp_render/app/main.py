@@ -295,18 +295,171 @@ def meta_webhook_verify(
 
 
 @app.post("/meta/whatsapp")
-async def meta_webhook_post(request: Request):
+async def meta_webhook_post(
+    request: Request,
+) -> dict[str, bool]:
+
+    logger.info("========== WEBHOOK POST ==========")
 
     raw_body = await request.body()
 
-    logger.info("========== WEBHOOK POST HIT ==========")
-    logger.info("HEADERS=%s", dict(request.headers))
+    signature = request.headers.get(
+        "X-Hub-Signature-256",
+        "",
+    )
+
+    logger.info(
+        "POST /meta/whatsapp body_bytes=%s signature_present=%s",
+        len(raw_body),
+        bool(signature),
+    )
+
+    try:
+        raw_text = raw_body.decode("utf-8")
+        logger.info("RAW BODY: %s", raw_text)
+    except Exception as ex:
+        logger.warning("No se pudo loguear raw body: %s", ex)
+
+    #
+    # VALIDACION DE FIRMA
+    # IMPORTANTE:
+    # En desarrollo puede convenir deshabilitarla
+    #
+    META_VALIDATE_SIGNATURE = (
+        os.environ.get(
+            "META_VALIDATE_SIGNATURE",
+            "false",
+        ).lower()
+        == "true"
+    )
+
+    logger.info(
+        "META_VALIDATE_SIGNATURE=%s",
+        META_VALIDATE_SIGNATURE,
+    )
+
+    if META_VALIDATE_SIGNATURE:
+
+        if signature and not validate_meta_signature(
+            raw_body,
+            signature,
+        ):
+            has_secret = bool(
+                os.environ.get(
+                    "META_APP_SECRET",
+                    "",
+                ).strip()
+            )
+
+            logger.warning(
+                "Firma Meta rechazada (403): "
+                "META_APP_SECRET configurado=%s "
+                "signature_length=%s "
+                "body_bytes=%s",
+                has_secret,
+                len(signature.strip()),
+                len(raw_body),
+            )
+
+            raise HTTPException(
+                status_code=403,
+                detail="Firma Meta invalida",
+            )
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))
-    except Exception:
-        payload = {"raw": raw_body.decode("utf-8", errors="ignore")}
 
-    logger.info("FULL PAYLOAD=%s", json.dumps(payload, indent=2))
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
+
+        logger.warning("JSON invalido: %s", exc)
+
+        raise HTTPException(
+            status_code=400,
+            detail="Payload invalido",
+        ) from exc
+
+    logger.info(
+        "Payload object=%s",
+        payload.get("object"),
+    )
+
+    incoming = _extract_incoming_messages(payload)
+
+    logger.info(
+        "Mensajes de texto extraidos=%s",
+        len(incoming),
+    )
+
+    if not incoming:
+        logger.info(
+            "Nada que procesar "
+            "(sin mensajes text o payload solo status)."
+        )
+
+    for wa_id, user_text, pnid in incoming:
+
+        logger.info(
+            "Procesando mensaje wa_id=%s pnid=%s text=%s",
+            wa_id,
+            pnid,
+            user_text,
+        )
+
+        ctx = await asyncio.to_thread(
+            _resolve_tenant,
+            pnid,
+        )
+
+        if ctx is None:
+
+            logger.warning(
+                "Sin tenant para phone_number_id=%r "
+                "(from=%r)",
+                pnid,
+                wa_id,
+            )
+
+            continue
+
+        system_prompt, user_prompt = _build_ai_answer(
+            user_text,
+            system_prompt_override=ctx.system_prompt,
+            catalog_csv_path=ctx.catalog_csv_path,
+        )
+
+        logger.info("Invocando LLM")
+
+        answer = await chat_completion(
+            [
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                },
+            ]
+        )
+
+        logger.info(
+            "LLM respondio answer_len=%s",
+            len(answer),
+        )
+
+        await send_whatsapp_text_message(
+            access_token=ctx.access_token,
+            phone_number_id=ctx.phone_number_id,
+            to_wa_id=wa_id,
+            message=answer,
+        )
+
+        logger.info(
+            "Respuesta enviada a wa_id=%s",
+            wa_id,
+        )
 
     return {"ok": True}
