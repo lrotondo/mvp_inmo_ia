@@ -295,12 +295,16 @@ def meta_webhook_verify(
 
 
 @app.post("/meta/whatsapp")
-async def meta_webhook_post(
-    request: Request,
-) -> dict[str, bool]:
-
-    logger.info("========== WEBHOOK POST ==========")
-
+async def meta_webhook_post(request: Request) -> dict[str, bool]:
+    _client = request.client.host if request.client else None
+    logger.info(
+        "POST /meta/whatsapp enter client=%s content_type=%s "
+        "content_length=%s x_hub_sig256_present=%s",
+        _client,
+        request.headers.get("content-type", ""),
+        request.headers.get("content-length", ""),
+        bool(request.headers.get("X-Hub-Signature-256")),
+    )
     raw_body = await request.body()
 
     signature = request.headers.get(
