@@ -64,8 +64,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "4. DATOS ESTRICTOS: Solo usa la información del catálogo provisto abajo. "
     "Elegí las propiedades más relevantes para lo que pregunta el cliente (zona, ambientes, precio, etc.). "
     "Si no tienes el dato (ej. precio o m2), di: 'No tengo ese detalle aquí conmigo, pero puedo consultarlo con el equipo'.\n"
-    "5. CIERRE: Siempre termina con una pregunta para mantener la charla viva (ej: ¿Te gustaría ir a verla? o ¿Buscás en alguna zona en especial?).\n"
-    "6. PROHIBIDO: No inventes propiedades, precios ni direcciones."
+    "5. FOTOS E INFO: Si piden fotos o más detalles de una propiedad, compartí el link de Fotos del catálogo "
+    "(en una viñeta) y un resumen breve de Caracteristicas. No digas que no hay fotos si el catálogo trae URL.\n"
+    "6. CIERRE: Siempre termina con una pregunta para mantener la charla viva (ej: ¿Te gustaría ir a verla? o ¿Buscás en alguna zona en especial?).\n"
+    "7. PROHIBIDO: No inventes propiedades, precios, direcciones ni links."
 )
 
 
@@ -162,7 +164,8 @@ def _build_system_prompt(
 
     base_prompt = (system_prompt_override or "").strip() or DEFAULT_SYSTEM_PROMPT
     catalog_header = (
-        f"CATÁLOGO DE PROPIEDADES ({row_count} propiedades, formato resumido; "
+        f"CATÁLOGO DE PROPIEDADES ({row_count} propiedades; "
+        "incluye características y link de fotos por fila; "
         "elegí las más relevantes para la consulta del cliente):\n"
     )
 

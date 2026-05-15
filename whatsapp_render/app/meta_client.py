@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import httpx
+
+_URL_IN_TEXT = re.compile(r"https?://", re.I)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,7 @@ async def send_whatsapp_text_message(
         "to": to_wa_id,
         "type": "text",
         "text": {
-            "preview_url": False,
+            "preview_url": bool(_URL_IN_TEXT.search(body)),
             "body": body,
         },
     }

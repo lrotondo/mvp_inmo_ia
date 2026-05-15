@@ -44,15 +44,19 @@ def load_properties() -> List[Dict[str, Any]]:
 
 
 def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
+    """Catálogo por fila con datos clave, características y link de fotos (cacheado vía get_cached_compact_catalog)."""
     lines = []
     for row in hits:
         lines.append(
-            "{ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes}".format(
+            "{ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
+            "Caracteristicas: {Caracteristicas} | Fotos: {Link_Fotos}".format(
                 ID=row.get("ID", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
                 Precio=row.get("Precio", ""),
                 Ambientes=row.get("Ambientes", ""),
+                Caracteristicas=row.get("Caracteristicas", ""),
+                Link_Fotos=row.get("Link_Fotos", ""),
             )
         )
     return "\n".join(lines)

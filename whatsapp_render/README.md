@@ -129,9 +129,9 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 ## Catálogo y relevancia
 
-- **Todas** las propiedades del CSV van en el **system prompt** en formato **compacto** (ID, dirección, barrio, precio, ambientes), **cacheado en memoria** por ruta del archivo.
+- **Todas** las propiedades del CSV van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** por ruta del archivo.
 - Tras cambiar el CSV en disco, reiniciar el servicio para refrescar la caché.
-- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
+- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python). Si el cliente pide fotos, el bot debe enviar la URL del catálogo; WhatsApp puede mostrar vista previa del link (`preview_url` activo cuando la respuesta incluye `http://` o `https://`).
 
 ## Historial de conversación
 
