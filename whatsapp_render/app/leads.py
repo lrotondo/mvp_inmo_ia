@@ -10,12 +10,23 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.conversation import format_history_plain, get_conversation_history
+from app.catalog import get_cached_compact_catalog, get_catalog_search_terms
+from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
 from app.groq_client import chat_completion
 from app.models import ClientLead
 
 logger = logging.getLogger(__name__)
+
+_INTEREST_KEYWORDS = re.compile(
+    r"\b("
+    r"visitar|visita|comprar|compra|alquilar|alquiler|reservar|reserva|"
+    r"precio|negociar|financiaci[oó]n|asesor|coordinar|"
+    r"interesad[oa]|me\s+interesa|quiero\s+ver|verla|verlo|"
+    r"ubicaci[oó]n|d[oó]nde\s+queda|llamar|humano"
+    r")\b",
+    re.I,
+)
 
 _CLASSIFIER_SYSTEM = (
     "Sos un analista de leads inmobiliarios. "
@@ -31,6 +42,8 @@ _CLASSIFIER_SYSTEM = (
     "false si solo saluda, pregunta genérico sin compromiso, o no hay propiedad ni zona definida."
 )
 
+_DEFAULT_LEAD_MODEL = "llama-3.1-8b-instant"
+
 
 @dataclass(frozen=True)
 class LeadClassification:
@@ -40,9 +53,49 @@ class LeadClassification:
     conversation_summary: str
 
 
+def _app_env() -> str:
+    return (
+        os.environ.get("APP_ENV", "").strip().lower()
+        or os.environ.get("ENVIRONMENT", "").strip().lower()
+    )
+
+
 def _lead_detection_enabled() -> bool:
+    if _app_env() in ("development", "dev", "local"):
+        logger.debug("Lead detection desactivado (entorno %s)", _app_env())
+        return False
     raw = os.environ.get("LEAD_DETECTION_ENABLED", "true").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def _lead_model() -> str:
+    return os.environ.get("GROQ_LEAD_MODEL", _DEFAULT_LEAD_MODEL).strip() or _DEFAULT_LEAD_MODEL
+
+
+def _text_has_lead_signals(text: str, catalog_terms: frozenset[str]) -> bool:
+    body = text.strip().lower()
+    if not body:
+        return False
+    if _INTEREST_KEYWORDS.search(body):
+        return True
+    for term in catalog_terms:
+        if len(term) >= 4 and term in body:
+            return True
+    return False
+
+
+def should_run_lead_classifier(
+    current_user_text: str,
+    history: list[HistoryTurn],
+    catalog_csv_path: str | None,
+) -> bool:
+    terms = get_catalog_search_terms(catalog_csv_path)
+    if _text_has_lead_signals(current_user_text, terms):
+        return True
+    for turn in history:
+        if turn.role == "user" and _text_has_lead_signals(turn.content, terms):
+            return True
+    return False
 
 
 def _parse_classifier_json(raw: str) -> LeadClassification | None:
@@ -74,14 +127,15 @@ def _parse_classifier_json(raw: str) -> LeadClassification | None:
 
 async def _classify_interest(conversation_text: str, catalog_excerpt: str) -> LeadClassification | None:
     user_content = (
-        f"Catálogo (referencia de propiedades):\n{catalog_excerpt[:4000]}\n\n"
-        f"Conversación:\n{conversation_text[:6000]}"
+        f"Catálogo (referencia):\n{catalog_excerpt[:2500]}\n\n"
+        f"Conversación:\n{conversation_text[:4000]}"
     )
     raw = await chat_completion(
         [
             {"role": "system", "content": _CLASSIFIER_SYSTEM},
             {"role": "user", "content": user_content},
         ],
+        model=_lead_model(),
         max_tokens=400,
         temperature=0.1,
     )
@@ -154,6 +208,7 @@ async def try_register_lead(
     wa_id: str,
     contact_name: str | None,
     catalog_csv_path: str | None,
+    current_user_text: str,
 ) -> None:
     if not _lead_detection_enabled():
         return
@@ -167,11 +222,11 @@ async def try_register_lead(
     if not any(t.role == "user" for t in history):
         return
 
-    from app.catalog import format_catalog, load_properties_for_catalog_path
+    if not should_run_lead_classifier(current_user_text, history, catalog_csv_path):
+        logger.info("Lead omitido (sin señales en mensaje/historial) wa_id=%s", wa_id)
+        return
 
-    rows = load_properties_for_catalog_path(catalog_csv_path)
-    catalog_excerpt = format_catalog(rows) or "(sin catálogo)"
-
+    _count, catalog_excerpt = get_cached_compact_catalog(catalog_csv_path)
     conversation_text = format_history_plain(history)
     classification = await _classify_interest(conversation_text, catalog_excerpt)
     if classification is None or not classification.is_real_interest:

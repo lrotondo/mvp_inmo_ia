@@ -20,7 +20,10 @@ Servicio para responder WhatsApp con un solo backend:
 |----------|-------------|-------------|
 | `DATABASE_URL` | recomendada (multicliente) | Postgres (Render: crear Postgres y pegar URL interna) |
 | `GROQ_API_KEY` | si | API key de Groq |
-| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` |
+| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` (respuestas al cliente) |
+| `GROQ_LEAD_MODEL` | no | Default: `llama-3.1-8b-instant` (clasificador de leads) |
+| `APP_ENV` | no | `development` / `dev` / `local` desactiva leads |
+| `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |
 | `META_VERIFY_TOKEN` | si | Token que configuras en Meta para verificar webhook |
 | `META_APP_SECRET` | si | **App Secret** (Basica de la app), no el Client Secret de Login |
 | `META_SKIP_SIGNATURE` | no | Si `1`, omite validacion de firma (solo depuracion) |
@@ -126,7 +129,9 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 ## Catálogo y relevancia
 
-- **Todas** las propiedades del CSV del tenant se envían en el **system prompt**; el LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
+- **Todas** las propiedades del CSV van en el **system prompt** en formato **compacto** (ID, dirección, barrio, precio, ambientes), **cacheado en memoria** por ruta del archivo.
+- Tras cambiar el CSV en disco, reiniciar el servicio para refrescar la caché.
+- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
 
 ## Historial de conversación
 
@@ -136,12 +141,12 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 ## Leads (`client_leads`)
 
-Requiere `DATABASE_URL`. Tras cada respuesta, Groq clasifica si hay **interés real**; si sí, se guarda en `client_leads`:
+Requiere `DATABASE_URL`. Tras cada respuesta, **solo si el mensaje o el historial tienen señales de interés** (visitar, comprar, precio, nombre de calle del catálogo, etc.), Groq clasifica con el modelo barato `GROQ_LEAD_MODEL` (default `llama-3.1-8b-instant`).
 
-- `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
-- Si el mismo cliente y propiedad repiten en 24 h, se **actualiza** la fila.
-
-Variable: `LEAD_DETECTION_ENABLED` (default `true`; `0` / `false` para desactivar).
+- Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
+- `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
+- Campos: `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
+- Mismo cliente + propiedad en 24 h → **actualiza** la fila.
 
 ```sql
 SELECT contact_name, wa_id, property_ref, interest_summary, conversation_at

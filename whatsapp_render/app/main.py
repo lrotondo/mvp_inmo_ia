@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from app.catalog import format_catalog, load_properties_for_catalog_path
+from app.catalog import get_cached_compact_catalog
 from app.conversation import (
     append_conversation_turn,
     build_groq_messages,
@@ -158,15 +158,11 @@ def _build_system_prompt(
     catalog_csv_path: str | None,
 ) -> str:
 
-    rows = load_properties_for_catalog_path(catalog_csv_path)
-    catalog = format_catalog(rows)
-
-    if not catalog:
-        catalog = "(catálogo vacío o no disponible.)"
+    row_count, catalog = get_cached_compact_catalog(catalog_csv_path)
 
     base_prompt = (system_prompt_override or "").strip() or DEFAULT_SYSTEM_PROMPT
     catalog_header = (
-        f"CATÁLOGO DE PROPIEDADES ({len(rows)} propiedades; "
+        f"CATÁLOGO DE PROPIEDADES ({row_count} propiedades, formato resumido; "
         "elegí las más relevantes para la consulta del cliente):\n"
     )
 
@@ -483,6 +479,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 wa_id=wa_id,
                 contact_name=contact_name or None,
                 catalog_csv_path=ctx.catalog_csv_path,
+                current_user_text=user_text,
             )
         except Exception:
             logger.exception("Error registrando lead wa_id=%s", wa_id)

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 async def chat_completion(
     messages: List[Dict[str, str]],
     *,
+    model: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
 ) -> str:
@@ -19,11 +20,11 @@ async def chat_completion(
     if not api_key:
         raise RuntimeError("GROQ_API_KEY no configurada")
 
-    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    model_name = (model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")).strip()
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}"}
     payload: Dict[str, Any] = {
-        "model": model,
+        "model": model_name,
         "temperature": 0.2 if temperature is None else temperature,
         "max_tokens": 600 if max_tokens is None else max_tokens,
         "top_p": 0.9,
