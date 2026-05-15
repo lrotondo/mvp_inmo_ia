@@ -133,3 +133,19 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 - Se guardan los últimos **10 mensajes** (≈5 turnos user/assistant) por `phone_number_id` + `wa_id` en Postgres (`chat_messages`), o en memoria si no hay `DATABASE_URL`.
 - Groq recibe: `system` (reglas + catálogo) + historial + mensaje actual.
 - Variable opcional: `CHAT_HISTORY_MAX_MESSAGES` (default `10`).
+
+## Leads (`client_leads`)
+
+Requiere `DATABASE_URL`. Tras cada respuesta, Groq clasifica si hay **interés real**; si sí, se guarda en `client_leads`:
+
+- `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
+- Si el mismo cliente y propiedad repiten en 24 h, se **actualiza** la fila.
+
+Variable: `LEAD_DETECTION_ENABLED` (default `true`; `0` / `false` para desactivar).
+
+```sql
+SELECT contact_name, wa_id, property_ref, interest_summary, conversation_at
+FROM client_leads
+WHERE phone_number_id = 'TU_PHONE_NUMBER_ID'
+ORDER BY conversation_at DESC;
+```

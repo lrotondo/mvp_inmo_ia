@@ -9,7 +9,12 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-async def chat_completion(messages: List[Dict[str, str]]) -> str:
+async def chat_completion(
+    messages: List[Dict[str, str]],
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> str:
     api_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY no configurada")
@@ -19,8 +24,8 @@ async def chat_completion(messages: List[Dict[str, str]]) -> str:
     headers = {"Authorization": f"Bearer {api_key}"}
     payload: Dict[str, Any] = {
         "model": model,
-        "temperature": 0.2,
-        "max_tokens": 600,
+        "temperature": 0.2 if temperature is None else temperature,
+        "max_tokens": 600 if max_tokens is None else max_tokens,
         "top_p": 0.9,
         "messages": messages,
         "stream": False,

@@ -143,6 +143,14 @@ def format_user_message(text: str) -> str:
     return f"Consulta del cliente: {text.strip()}"
 
 
+def format_history_plain(history: list[HistoryTurn]) -> str:
+    lines: list[str] = []
+    for turn in history:
+        label = "Cliente" if turn.role == "user" else "Asesor"
+        lines.append(f"{label}: {turn.content}")
+    return "\n".join(lines)
+
+
 def build_groq_messages(
     system_prompt: str,
     history: list[HistoryTurn],

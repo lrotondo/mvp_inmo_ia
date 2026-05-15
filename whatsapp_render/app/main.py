@@ -22,6 +22,7 @@ from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
 )
+from app.leads import try_register_lead
 from app.meta_client import send_whatsapp_text_message
 from app.tenant_service import (
     TenantContext,
@@ -48,6 +49,7 @@ def _configure_logging() -> None:
         "app.db",
         "app.tenant_service",
         "app.meta_client",
+        "app.leads",
     ):
         logging.getLogger(name).setLevel(logging.INFO)
 
@@ -173,9 +175,9 @@ def _build_system_prompt(
 
 def _extract_incoming_messages(
     payload: dict[str, Any],
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str, str, str]]:
 
-    incoming: list[tuple[str, str, str]] = []
+    incoming: list[tuple[str, str, str, str]] = []
 
     entries = payload.get("entry") or []
 
@@ -200,6 +202,11 @@ def _extract_incoming_messages(
                 if contacts
                 else ""
             )
+
+            contact_name = ""
+            if contacts:
+                profile = (contacts[0] or {}).get("profile") or {}
+                contact_name = str(profile.get("name") or "").strip()
 
             messages = value.get("messages") or []
 
@@ -240,6 +247,7 @@ def _extract_incoming_messages(
                             sender,
                             body,
                             phone_number_id,
+                            contact_name,
                         )
                     )
 
@@ -398,12 +406,13 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             "(sin mensajes text o payload solo status)."
         )
 
-    for wa_id, user_text, pnid in incoming:
+    for wa_id, user_text, pnid, contact_name in incoming:
 
         logger.info(
-            "Procesando mensaje wa_id=%s pnid=%s text=%s",
+            "Procesando mensaje wa_id=%s pnid=%s name=%r text=%s",
             wa_id,
             pnid,
+            contact_name or None,
             user_text,
         )
 
@@ -467,6 +476,16 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             user_text,
             answer,
         )
+
+        try:
+            await try_register_lead(
+                phone_number_id=ctx.phone_number_id,
+                wa_id=wa_id,
+                contact_name=contact_name or None,
+                catalog_csv_path=ctx.catalog_csv_path,
+            )
+        except Exception:
+            logger.exception("Error registrando lead wa_id=%s", wa_id)
 
         logger.info(
             "Respuesta enviada a wa_id=%s",

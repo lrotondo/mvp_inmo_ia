@@ -35,3 +35,30 @@ class ChatMessage(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class ClientLead(Base):
+    __tablename__ = "client_leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    phone_number_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    wa_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    contact_name = mapped_column(String(255), nullable=True)
+    property_ref = mapped_column(String(512), nullable=True)
+    interest_summary = mapped_column(Text, nullable=False)
+    conversation_summary = mapped_column(Text, nullable=False)
+    conversation_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
