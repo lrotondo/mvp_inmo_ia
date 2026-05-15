@@ -54,7 +54,7 @@ def get_conversation_history(
     if get_engine() is not None:
         with session_scope() as session:
             stmt = (
-                select(ChatMessage)
+                select(ChatMessage.role, ChatMessage.content)
                 .where(
                     ChatMessage.phone_number_id == pnid,
                     ChatMessage.wa_id == wid,
@@ -62,14 +62,13 @@ def get_conversation_history(
                 .order_by(ChatMessage.created_at.desc())
                 .limit(cap)
             )
-            rows = list(session.scalars(stmt).all())
-        rows.reverse()
+            rows = list(session.execute(stmt).all())
         out: list[HistoryTurn] = []
-        for r in rows:
-            if r.role == "user":
-                out.append(HistoryTurn(role="user", content=r.content))
-            elif r.role == "assistant":
-                out.append(HistoryTurn(role="assistant", content=r.content))
+        for role, content in reversed(rows):
+            if role == "user":
+                out.append(HistoryTurn(role="user", content=content))
+            elif role == "assistant":
+                out.append(HistoryTurn(role="assistant", content=content))
         return out
 
     key = _memory_key(pnid, wid)
