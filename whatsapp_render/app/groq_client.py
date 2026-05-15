@@ -16,17 +16,18 @@ async def chat_completion(messages: List[Dict[str, str]]) -> str:
     headers = {"Authorization": f"Bearer {api_key}"}
     payload: Dict[str, Any] = {
         "model": model,
-        "temperature": 0.3,
+        "temperature": 0.2, # Un poco más bajo para ser más determinista
+        "max_tokens": 600,
+        "top_p": 0.9,
         "messages": messages,
+        "stream": False # Aseguramos que sea síncrono para tu flujo actual
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-    choices = data.get("choices") or []
-    if not choices:
-        return "No pude generar una respuesta en este momento."
-    message = choices[0].get("message") or {}
-    return str(message.get("content") or "").strip() or "No pude generar una respuesta."
+    async with httpx.AsyncClient(timeout=45.0) as client: # 45s es suficiente
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error de Groq: {e.response.text}")
+            return "Lo siento, tuve un problema técnico. ¿Podrías repetir tu consulta?"
