@@ -124,8 +124,12 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 3. Revisa logs: si `cabecera_X-Hub-Signature-256_longitud=0`, Meta no esta enviando la cabecera (proxy o ruta incorrecta).
 4. Solo para aislar el problema (nunca en produccion): `META_SKIP_SIGNATURE=1` confirma que el resto del flujo funciona; luego volve a validar firma con el App Secret correcto.
 
-## Filtros soportados en el mensaje
+## Catálogo y relevancia
 
-- `tandil` / `rauch` en el texto filtra por barrio.
-- `2 amb`, `3 amb`, etc.
-- `hasta USD 90000`, `hasta 90000`, `menos de 100000`.
+- **Todas** las propiedades del CSV del tenant se envían en el **system prompt**; el LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
+
+## Historial de conversación
+
+- Se guardan los últimos **10 mensajes** (≈5 turnos user/assistant) por `phone_number_id` + `wa_id` en Postgres (`chat_messages`), o en memoria si no hay `DATABASE_URL`.
+- Groq recibe: `system` (reglas + catálogo) + historial + mensaje actual.
+- Variable opcional: `CHAT_HISTORY_MAX_MESSAGES` (default `10`).

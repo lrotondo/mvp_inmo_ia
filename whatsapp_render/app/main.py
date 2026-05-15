@@ -10,10 +10,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from app.catalog import (
-    filter_properties,
-    format_catalog,
-    load_properties_for_catalog_path,
+from app.catalog import format_catalog, load_properties_for_catalog_path
+from app.conversation import (
+    append_conversation_turn,
+    build_groq_messages,
+    get_conversation_history,
 )
 from app.db import dispose_engine, get_engine, init_db
 from app.groq_client import chat_completion
@@ -58,7 +59,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "1. Usa emojis de forma moderada para ser amigable (ej: 🏠,📍,✅).\n"
     "2. Si el cliente pregunta por una zona, destaca beneficios locales (ej: 'cerca del Calvario', 'zona Uncas', 'vistas a las sierras').\n"
     "3. RESPUESTA BREVE: En WhatsApp la gente no lee párrafos largos. Usa viñetas (bullet points).\n"
-    "4. DATOS ESTRICTOS: Solo usa la información del catálogo provisto. Si no tienes el dato (ej. precio o m2), di: 'No tengo ese detalle aquí conmigo, pero puedo consultarlo con el equipo'.\n"
+    "4. DATOS ESTRICTOS: Solo usa la información del catálogo provisto abajo. "
+    "Elegí las propiedades más relevantes para lo que pregunta el cliente (zona, ambientes, precio, etc.). "
+    "Si no tienes el dato (ej. precio o m2), di: 'No tengo ese detalle aquí conmigo, pero puedo consultarlo con el equipo'.\n"
     "5. CIERRE: Siempre termina con una pregunta para mantener la charla viva (ej: ¿Te gustaría ir a verla? o ¿Buscás en alguna zona en especial?).\n"
     "6. PROHIBIDO: No inventes propiedades, precios ni direcciones."
 )
@@ -147,38 +150,25 @@ def _resolve_tenant(phone_number_id: str) -> TenantContext | None:
     return None
 
 
-def _build_ai_answer(
-    user_text: str,
+def _build_system_prompt(
     *,
     system_prompt_override: str | None,
     catalog_csv_path: str | None,
-) -> tuple[str, str]:
-
-    text = user_text.strip()
+) -> str:
 
     rows = load_properties_for_catalog_path(catalog_csv_path)
-
-    hits = filter_properties(text, rows)
-
-    catalog = format_catalog(hits)
+    catalog = format_catalog(rows)
 
     if not catalog:
-        catalog = (
-            "(sin coincidencias con el filtro simple; "
-            "pedi mas detalles o propon ampliar criterios.)"
-        )
+        catalog = "(catálogo vacío o no disponible.)"
 
-    system_prompt = (
-        (system_prompt_override or "").strip()
-        or DEFAULT_SYSTEM_PROMPT
+    base_prompt = (system_prompt_override or "").strip() or DEFAULT_SYSTEM_PROMPT
+    catalog_header = (
+        f"CATÁLOGO DE PROPIEDADES ({len(rows)} propiedades; "
+        "elegí las más relevantes para la consulta del cliente):\n"
     )
 
-    user_prompt = (
-        f"Consulta del cliente: {text}\n\n"
-        f"Catalogo (hasta 3 opciones):\n{catalog}"
-    )
-
-    return system_prompt, user_prompt
+    return f"{base_prompt}\n\n{catalog_header}{catalog}"
 
 
 def _extract_incoming_messages(
@@ -433,26 +423,30 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
 
             continue
 
-        system_prompt, user_prompt = _build_ai_answer(
-            user_text,
+        system_prompt = _build_system_prompt(
             system_prompt_override=ctx.system_prompt,
             catalog_csv_path=ctx.catalog_csv_path,
         )
 
-        logger.info("Invocando LLM")
-
-        answer = await chat_completion(
-            [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ]
+        history = await asyncio.to_thread(
+            get_conversation_history,
+            ctx.phone_number_id,
+            wa_id,
         )
+
+        groq_messages = build_groq_messages(
+            system_prompt,
+            history,
+            user_text,
+        )
+
+        logger.info(
+            "Invocando LLM history_messages=%s groq_messages=%s",
+            len(history),
+            len(groq_messages),
+        )
+
+        answer = await chat_completion(groq_messages)
 
         logger.info(
             "LLM respondio answer_len=%s",
@@ -464,6 +458,14 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             phone_number_id=ctx.phone_number_id,
             to_wa_id=wa_id,
             message=answer,
+        )
+
+        await asyncio.to_thread(
+            append_conversation_turn,
+            ctx.phone_number_id,
+            wa_id,
+            user_text,
+            answer,
         )
 
         logger.info(
