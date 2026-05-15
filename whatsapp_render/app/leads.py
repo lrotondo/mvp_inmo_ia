@@ -215,7 +215,7 @@ async def try_register_lead(
     if get_engine() is None:
         return
 
-    history = get_conversation_history(phone_number_id, wa_id, limit=20)
+    history = get_conversation_history(phone_number_id, wa_id, limit=4)
     if not history:
         return
 
