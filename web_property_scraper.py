@@ -38,7 +38,23 @@ NOISE_FEATURE_TERMS = [
     "linkedin",
     "correo electronico",
     "iniciar sesion",
+    "búsqueda avanzada",
+    "quienes somos",
+    "contáctenos",
+    "campos, chacras",
+    "departamento (",
+    "lote / terreno (",
 ]
+
+WASI_FEATURE_LABELS = (
+    ("Estado", r"Estado:\s*([^:]+?)(?=\s+Área|\s+Area|\s+Dormitorios|\s+Tipo|$)"),
+    ("Área construida", r"Área Construida:\s*([^:]+?)(?=\s+Área|\s+Area|\s+Dormitorios|$)"),
+    ("Área terreno", r"Área Terreno:\s*([^:]+?)(?=\s+Área|\s+Dormitorios|\s+Tipo|$)"),
+    ("Área privada", r"Área Privada:\s*([^:]+?)(?=\s+Área|\s+Dormitorios|\s+Tipo|$)"),
+    ("Dormitorios", r"Dormitorios:\s*(\d+)"),
+    ("Tipo", r"Tipo de inmueble:\s*([^:]+?)(?=\s+Tipo de negocio|$)"),
+    ("Negocio", r"Tipo de negocio:\s*([^:]+?)(?=\s+Admite|$)"),
+)
 
 NEIGHBORHOOD_HINTS = [
     "barrio",
@@ -70,20 +86,6 @@ class PropertyRow:
         }
 
 
-@dataclass
-class PropertyPhotoRow:
-    property_id: str
-    photo_url: str
-    photo_order: int
-
-    def as_csv_row(self) -> Dict[str, str]:
-        return {
-            "ID": self.property_id,
-            "Foto_URL": self.photo_url,
-            "Orden_Foto": str(self.photo_order),
-        }
-
-
 def normalize_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
@@ -105,6 +107,71 @@ def is_vivas_domain(url: str) -> bool:
 def is_property_url(url: str) -> bool:
     path = urlparse(url).path.lower()
     return "/propiedad/" in path
+
+
+def is_wasi_domain(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return "wasi.co" in host or "coworksolucionesinmobiliarias" in host
+
+
+def is_wasi_property_detail_url(url: str) -> bool:
+    if not is_wasi_domain(url):
+        return False
+    return bool(re.search(r"/\d{6,9}/?$", urlparse(url).path))
+
+
+def is_wasi_listing_url(url: str) -> bool:
+    if not is_wasi_domain(url) or is_wasi_property_detail_url(url):
+        return False
+    lower = url.lower()
+    return "/s/" in lower or "/search" in lower or lower.rstrip("/").endswith("/ventas")
+
+
+def extract_wasi_property_id(url: str) -> str:
+    match = re.search(r"/(\d{6,9})/?$", urlparse(url).path)
+    return match.group(1) if match else ""
+
+
+def normalize_wasi_property_url(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+
+
+def parse_wasi_labeled_fields(body_flat: str) -> Dict[str, str]:
+    fields: Dict[str, str] = {}
+    city_match = re.search(
+        r"Ciudad:\s*([^:]+?)(?=\s+Zona:|\s+C[oó]digo:|\s+Estado:)",
+        body_flat,
+        re.I,
+    )
+    if city_match:
+        fields["ciudad"] = normalize_spaces(city_match.group(1))
+
+    zone_match = re.search(
+        r"Zona:\s*([^:]+?)(?=\s+C[oó]digo:|\s+Estado:|\s+Área|\s+Area)",
+        body_flat,
+        re.I,
+    )
+    if zone_match:
+        fields["zona"] = normalize_spaces(zone_match.group(1))
+
+    code_match = re.search(r"C[oó]digo:\s*(\d{6,9})", body_flat, re.I)
+    if code_match:
+        fields["codigo"] = code_match.group(1)
+
+    for label, pattern in WASI_FEATURE_LABELS:
+        match = re.search(pattern, body_flat, re.I)
+        if match:
+            fields[label.lower()] = normalize_spaces(match.group(1))
+
+    extras = []
+    for token in ("Admite mascotas", "Agua", "Electricidad", "Gas natural", "Bosque nativos"):
+        if re.search(rf"(?i)\b{re.escape(token)}\b", body_flat):
+            extras.append(token)
+    if extras:
+        fields["extras"] = " | ".join(extras)
+
+    return fields
 
 
 def extract_links(base_url: str, soup: BeautifulSoup) -> List[str]:
@@ -212,19 +279,13 @@ def get_embedded_city(item: Dict) -> str:
 
 
 def get_embedded_images(item: Dict) -> str:
-    image_links: List[str] = []
+    """Solo imagen destacada de la API WP (sin recorrer el HTML del contenido)."""
     embedded = item.get("_embedded", {})
-    featured_media = embedded.get("wp:featuredmedia", [])
-    for media in featured_media:
+    for media in embedded.get("wp:featuredmedia", []):
         src = media.get("source_url")
-        if src and src not in image_links:
-            image_links.append(src)
-
-    content_html = item.get("content", {}).get("rendered", "")
-    for match in re.findall(r'https?://[^"\']+\.(?:jpg|jpeg|png|webp)', content_html, re.I):
-        if match not in image_links:
-            image_links.append(match)
-    return " | ".join(image_links[:20])
+        if src:
+            return normalize_spaces(src)
+    return ""
 
 
 def fetch_properties_from_wp_api(start_url: str, timeout_seconds: int) -> List[PropertyRow]:
@@ -288,13 +349,193 @@ def fetch_properties_from_wp_api(start_url: str, timeout_seconds: int) -> List[P
     return rows
 
 
-def collect_photos(page_url: str, soup: BeautifulSoup) -> str:
-    photo_urls = []
-    for image in soup.find_all("img", src=True):
-        src = urljoin(page_url, image["src"])
-        if src not in photo_urls:
-            photo_urls.append(src)
-    return " | ".join(photo_urls[:20])
+def pick_primary_photo_link(page_url: str, soup: BeautifulSoup) -> str:
+    """Una sola URL de foto (og:image / destacada), sin recorrer todas las img de la página."""
+    for selector in (
+        ("meta", {"property": "og:image"}),
+        ("meta", {"name": "twitter:image"}),
+        ("meta", {"property": "og:image:url"}),
+    ):
+        tag = soup.find(*selector)
+        if tag and tag.get("content"):
+            link = urljoin(page_url, tag["content"].strip())
+            if "/empresas/" not in link.lower():
+                return link
+
+    for image in soup.select(
+        "img[src][class*='featured'], img[src][class*='principal'], "
+        "img[src][class*='property'], img[src][class*='foto']"
+    ):
+        src = image.get("src") or image.get("data-src")
+        if src and not src.lower().startswith("data:"):
+            link = urljoin(page_url, src.strip())
+            if "/empresas/" not in link.lower():
+                return link
+
+    return ""
+
+
+def build_wasi_property_row(page_url: str, soup: BeautifulSoup) -> PropertyRow:
+    body_flat = re.sub(r"\s+", " ", soup.get_text(" "))
+    fields = parse_wasi_labeled_fields(body_flat)
+    property_id = fields.get("codigo") or extract_wasi_property_id(page_url)
+
+    title = infer_address(soup)
+    address = re.sub(r"\s*-\s*(?:US\$|USD|\$).*$", "", title, flags=re.I).strip()
+    address = re.sub(r"\s{2,}", " ", address)
+
+    neighborhood = fields.get("zona") or fields.get("ciudad") or ""
+    if not neighborhood:
+        barrio_match = re.search(r"(?i)barrio\s+([^,\-]+)", address)
+        if barrio_match:
+            neighborhood = normalize_spaces(barrio_match.group(1))
+    if not neighborhood and re.search(r"(?i)tandil", address):
+        neighborhood = "Tandil"
+
+    price = find_price(body_flat) or find_price(title)
+    rooms = ""
+    if fields.get("dormitorios"):
+        rooms = f"{fields['dormitorios']} ambientes"
+    if not rooms:
+        rooms = find_rooms(title) or find_rooms(body_flat)
+    dorm_label = fields.get("dormitorios", "")
+    if not rooms and dorm_label.isdigit():
+        rooms = f"{dorm_label} ambientes"
+
+    feature_parts: List[str] = []
+    for label in (
+        "estado",
+        "área construida",
+        "área terreno",
+        "área privada",
+        "tipo",
+        "negocio",
+        "extras",
+    ):
+        value = fields.get(label)
+        if value:
+            display = label.replace("área", "Área").title()
+            if label == "tipo":
+                display = "Tipo"
+            elif label == "negocio":
+                display = "Negocio"
+            elif label == "extras":
+                display = "Extras"
+            feature_parts.append(f"{display}: {value}")
+
+    return PropertyRow(
+        property_id=property_id,
+        address=address or title,
+        neighborhood=neighborhood,
+        price=price,
+        rooms=rooms,
+        features=" | ".join(feature_parts),
+        photo_links=pick_primary_photo_link(page_url, soup),
+    )
+
+
+def is_valid_property_row(row: PropertyRow) -> bool:
+    if not row.property_id or not row.price:
+        return False
+    if not re.fullmatch(r"\d{6,9}", str(row.property_id).strip()):
+        return False
+    upper_address = (row.address or "").upper()
+    if "BÚSQUEDA AVANZADA" in upper_address:
+        return False
+    if row.photo_links and "/empresas/" in row.photo_links.lower():
+        return False
+    return True
+
+
+def crawl_wasi_properties(
+    start_url: str,
+    max_pages: int,
+    delay_seconds: float,
+    timeout_seconds: int,
+) -> List[PropertyRow]:
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/123.0.0.0 Safari/537.36"
+            )
+        }
+    )
+
+    base = f"{urlparse(start_url).scheme}://{urlparse(start_url).netloc}"
+    listing_seeds = [
+        start_url,
+        urljoin(base, "/s/ventas"),
+        urljoin(base, "/s/casa/ventas?id_property_type=1&business_type%5B0%5D=for_sale"),
+        urljoin(
+            base,
+            "/s/departamento/ventas?id_property_type=2&business_type%5B0%5D=for_sale",
+        ),
+        urljoin(
+            base,
+            "/s/lote-terreno/ventas?id_property_type=5&business_type%5B0%5D=for_sale",
+        ),
+        urljoin(base, "/s/local/ventas?id_property_type=3&business_type%5B0%5D=for_sale"),
+        urljoin(
+            base,
+            "/s/campos-chacras-y-quintas/ventas?id_property_type=31&business_type%5B0%5D=for_sale",
+        ),
+    ]
+
+    property_urls: Set[str] = set()
+    listing_pending: deque[str] = deque()
+    listing_seen: Set[str] = set()
+    for seed in listing_seeds:
+        if seed not in listing_seen:
+            listing_seen.add(seed)
+            listing_pending.append(seed)
+
+    while listing_pending and len(listing_seen) < max_pages:
+        current = listing_pending.popleft()
+        try:
+            response = session.get(current, timeout=timeout_seconds)
+            if response.status_code >= 400:
+                continue
+        except requests.RequestException:
+            continue
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        for link in extract_links(current, soup):
+            if is_wasi_property_detail_url(link):
+                property_urls.add(normalize_wasi_property_url(link))
+                continue
+            if is_wasi_listing_url(link) and link not in listing_seen:
+                listing_seen.add(link)
+                listing_pending.append(link)
+
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    rows: List[PropertyRow] = []
+    seen_ids: Set[str] = set()
+    for detail_url in sorted(property_urls):
+        try:
+            response = session.get(detail_url, timeout=timeout_seconds)
+            if response.status_code >= 400:
+                continue
+        except requests.RequestException:
+            continue
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        row = build_wasi_property_row(detail_url, soup)
+        if not is_valid_property_row(row):
+            continue
+        if row.property_id in seen_ids:
+            continue
+        seen_ids.add(row.property_id)
+        rows.append(row)
+
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    return rows
 
 
 def infer_address(soup: BeautifulSoup) -> str:
@@ -393,7 +634,7 @@ def build_property_row(page_url: str, soup: BeautifulSoup) -> PropertyRow:
         price=find_price(page_text),
         rooms=rooms,
         features=infer_features(soup),
-        photo_links=collect_photos(page_url, soup),
+        photo_links=pick_primary_photo_link(page_url, soup),
     )
 
 
@@ -403,6 +644,11 @@ def crawl_properties(
     delay_seconds: float,
     timeout_seconds: int,
 ) -> List[PropertyRow]:
+    if is_wasi_domain(start_url):
+        return crawl_wasi_properties(
+            start_url, max_pages, delay_seconds, timeout_seconds
+        )
+
     wp_api_rows = fetch_properties_from_wp_api(start_url, timeout_seconds)
     if wp_api_rows:
         return wp_api_rows
@@ -444,9 +690,12 @@ def crawl_properties(
 
         soup = BeautifulSoup(response.text, "html.parser")
         text = normalize_spaces(soup.get_text(" ", strip=True))
-        if looks_like_listing(text, current):
+        if looks_like_listing(text, current) and not is_wasi_domain(current):
             row = build_property_row(current, soup)
-            if row.property_id not in seen_ids and row.price:
+            if (
+                is_valid_property_row(row)
+                and row.property_id not in seen_ids
+            ):
                 seen_ids.add(row.property_id)
                 rows.append(row)
 
@@ -471,29 +720,6 @@ def crawl_properties(
     return rows
 
 
-def build_photo_rows(rows: List[PropertyRow]) -> List[PropertyPhotoRow]:
-    photo_rows: List[PropertyPhotoRow] = []
-    for row in rows:
-        if not row.photo_links:
-            continue
-        links = [normalize_spaces(link) for link in row.photo_links.split("|")]
-        clean_links: List[str] = []
-        for link in links:
-            if not link:
-                continue
-            if link not in clean_links:
-                clean_links.append(link)
-        for index, link in enumerate(clean_links, start=1):
-            photo_rows.append(
-                PropertyPhotoRow(
-                    property_id=row.property_id,
-                    photo_url=link,
-                    photo_order=index,
-                )
-            )
-    return photo_rows
-
-
 def write_csv(output_file: str, rows: List[PropertyRow]) -> None:
     with open(output_file, "w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
@@ -513,27 +739,6 @@ def write_csv(output_file: str, rows: List[PropertyRow]) -> None:
             writer.writerow(row.as_csv_row())
 
 
-def write_photos_csv(output_file: str, rows: List[PropertyPhotoRow]) -> None:
-    with open(output_file, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "ID",
-                "Foto_URL",
-                "Orden_Foto",
-            ],
-        )
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row.as_csv_row())
-
-
-def default_photos_output(properties_output: str) -> str:
-    base, ext = os.path.splitext(properties_output)
-    final_ext = ext if ext else ".csv"
-    return f"{base}_fotos{final_ext}"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrapea un sitio inmobiliario y exporta propiedades a CSV."
@@ -544,11 +749,6 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="propiedades.csv",
         help="Ruta de salida del CSV (default: propiedades.csv).",
-    )
-    parser.add_argument(
-        "--photos-output",
-        default="",
-        help="Ruta de salida del CSV de fotos (default: <output>_fotos.csv).",
     )
     parser.add_argument(
         "--max-pages",
@@ -579,15 +779,11 @@ def main() -> None:
         delay_seconds=args.delay,
         timeout_seconds=args.timeout,
     )
-    photo_rows = build_photo_rows(rows)
-    photos_output = args.photos_output or default_photos_output(args.output)
-
     write_csv(args.output, rows)
-    write_photos_csv(photos_output, photo_rows)
+    with_photo = sum(1 for row in rows if row.photo_links)
     print(f"Propiedades detectadas: {len(rows)}")
+    print(f"Con link de foto en CSV: {with_photo}")
     print(f"CSV generado en: {args.output}")
-    print(f"Fotos detectadas: {len(photo_rows)}")
-    print(f"CSV de fotos generado en: {photos_output}")
 
 
 if __name__ == "__main__":
