@@ -5,8 +5,8 @@ Servicio para responder WhatsApp con un solo backend:
 - Meta envia `POST` al webhook publico.
 - Se valida verify token (`GET`) y firma `X-Hub-Signature-256` (`POST`).
 - Se identifica la inmobiliaria por `metadata.phone_number_id` del JSON y se busca en Postgres (`tenants`).
-- Cada tenant tiene su `access_token`, `phone_number_id`, prompt opcional y CSV de catalogo.
-- Groq redacta la respuesta; Graph API envia el mensaje con el token de ese tenant.
+- Cada tenant tiene su `access_token`, `phone_number_id`, prompt opcional y CSV(s) de catálogo (venta + alquiler).
+- DeepSeek redacta la respuesta con flujo **Espacios360** (3 caminos: compra, alquiler, captación); Graph API envía el mensaje.
 
 ## Endpoints
 
@@ -40,17 +40,40 @@ Columnas principales:
 - `phone_number_id` (unico) — coincide con `value.metadata.phone_number_id` del webhook
 - `access_token` — token de WhatsApp Cloud API de ese cliente (Fase 1 en texto plano; rotar si se filtra)
 - `name` — opcional
-- `system_prompt` — opcional; si vacio se usa el prompt por defecto del codigo
-- `catalog_csv_path` — opcional; ruta relativa al proyecto, ej. `data/propiedades_vivas.csv` o `data/tenants/cliente.csv`
+- `system_prompt` — opcional; si vacío se usa el prompt **Espacios360 Flow** del código
+- `catalog_csv_path` — CSV de **venta** (ej. `data/tenants/inmobiliaria_cowork.csv`)
+- `catalog_rent_csv_path` — CSV de **alquiler** (ej. `data/tenants/inmobiliaria_cowork_alquiler.csv`)
 
 En el primer deploy con `DATABASE_URL`, las tablas se crean con `create_all` al arrancar.
+
+### Migración en Postgres existente (si ya tenías tablas)
+
+```sql
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS catalog_rent_csv_path VARCHAR(512);
+
+ALTER TABLE client_leads ADD COLUMN IF NOT EXISTS lead_type VARCHAR(32) NOT NULL DEFAULT 'venta';
+ALTER TABLE client_leads ADD COLUMN IF NOT EXISTS capture_summary TEXT;
+
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id SERIAL PRIMARY KEY,
+    phone_number_id VARCHAR(64) NOT NULL,
+    wa_id VARCHAR(32) NOT NULL,
+    flow_path VARCHAR(32) NOT NULL DEFAULT 'nuevo',
+    bot_paused BOOLEAN NOT NULL DEFAULT FALSE,
+    capture_data TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_chat_session UNIQUE (phone_number_id, wa_id)
+);
+CREATE INDEX IF NOT EXISTS ix_chat_sessions_phone_number_id ON chat_sessions (phone_number_id);
+CREATE INDEX IF NOT EXISTS ix_chat_sessions_wa_id ON chat_sessions (wa_id);
+```
 
 ## Alta manual del primer cliente
 
 Desde la carpeta `whatsapp_render` con `DATABASE_URL` exportada:
 
 ```powershell
-python -m app.seed_tenant --phone-number-id "TU_PHONE_NUMBER_ID" --access-token "TU_TOKEN" --name "Inmobiliaria Demo" --catalog-csv-path "data/propiedades_vivas.csv"
+python -m app.seed_tenant --phone-number-id "TU_PHONE_NUMBER_ID" --access-token "TU_TOKEN" --name "Inmobiliaria Demo" --catalog-csv-path "data/tenants/inmobiliaria_cowork.csv" --catalog-rent-csv-path "data/tenants/inmobiliaria_cowork_alquiler.csv"
 ```
 
 Equivalente en SQL (ajusta valores):
@@ -128,6 +151,15 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 2. En Render, variable **`META_APP_SECRET`**: pegar el secreto **sin comillas**; si al copiar quedaron comillas o un salto de linea al final, borralos y redeploy.
 3. Revisa logs: si `cabecera_X-Hub-Signature-256_longitud=0`, Meta no esta enviando la cabecera (proxy o ruta incorrecta).
 4. Solo para aislar el problema (nunca en produccion): `META_SKIP_SIGNATURE=1` confirma que el resto del flujo funciona; luego volve a validar firma con el App Secret correcto.
+
+## Flujo Espacios360 (3 caminos)
+
+1. **Triage** (`flow_path=nuevo`): saludo y pregunta si compra, alquila o vende su propiedad.
+2. **Compra** (`compra`): catálogo de venta; calificación financiera; bandera `[ALERTA_VENTA]` si hay interés alto.
+3. **Alquiler** (`alquiler`): catálogo de alquiler; filtro garantía/mascotas; bandera `[ALERTA_ALQUILER]`.
+4. **Captación** (`captacion`): recopila tipo, ubicación y m²/ambientes; cierre fijo y `[ALERTA_CAPTACION_PROPIETARIO]`; **pausa el bot** para ese chat (`bot_paused`).
+
+Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente y disparan lead + WhatsApp al asesor (`LEAD_WHATSAPP_NOTIFY_TO`).
 
 ## Catálogo y relevancia
 

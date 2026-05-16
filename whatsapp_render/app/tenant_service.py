@@ -16,6 +16,7 @@ class TenantContext:
     name: str | None
     system_prompt: str | None
     catalog_csv_path: str | None
+    catalog_rent_csv_path: str | None
 
 
 def get_tenant_by_phone_number_id(session: Session, phone_number_id: str) -> Tenant | None:
@@ -40,4 +41,5 @@ def fetch_tenant_context(phone_number_id: str) -> TenantContext | None:
             name=row.name,
             system_prompt=row.system_prompt,
             catalog_csv_path=row.catalog_csv_path,
+            catalog_rent_csv_path=row.catalog_rent_csv_path,
         )

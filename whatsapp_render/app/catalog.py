@@ -47,9 +47,11 @@ def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
     """Catálogo por fila con datos clave, características y link de fotos (cacheado vía get_cached_compact_catalog)."""
     lines = []
     for row in hits:
+        tour = row.get("Tour_360") or row.get("Tour_360_URL") or ""
+        tour_part = f" | Tour_360: {tour}" if str(tour).strip() else ""
         lines.append(
             "{ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
-            "Caracteristicas: {Caracteristicas} | Fotos: {Link_Fotos}".format(
+            "Caracteristicas: {Caracteristicas} | Fotos: {Link_Fotos}{tour_part}".format(
                 ID=row.get("ID", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
@@ -57,6 +59,7 @@ def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
                 Ambientes=row.get("Ambientes", ""),
                 Caracteristicas=row.get("Caracteristicas", ""),
                 Link_Fotos=row.get("Link_Fotos", ""),
+                tour_part=tour_part,
             )
         )
     return "\n".join(lines)
@@ -114,3 +117,17 @@ def get_cached_compact_catalog(
 def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
     path = resolve_catalog_path(catalog_csv_path)
     return _catalog_search_terms_cached(str(path.resolve()))
+
+
+def get_catalog_for_flow(
+    flow_path: str,
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+) -> tuple[int, str]:
+    """Catálogo según rama: compra -> venta CSV, alquiler -> rent CSV."""
+    path = (flow_path or "").strip().lower()
+    if path == "compra":
+        return get_cached_compact_catalog(catalog_sale_path)
+    if path == "alquiler":
+        return get_cached_compact_catalog(catalog_rent_path)
+    return 0, ""

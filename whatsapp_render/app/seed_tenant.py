@@ -21,7 +21,12 @@ def main() -> None:
     parser.add_argument(
         "--catalog-csv-path",
         default="",
-        help="Ruta CSV relativa al proyecto, ej: data/propiedades_vivas.csv. Vacio = default.",
+        help="CSV de venta, ej: data/tenants/inmobiliaria_cowork.csv. Vacio = default.",
+    )
+    parser.add_argument(
+        "--catalog-rent-csv-path",
+        default="",
+        help="CSV de alquiler, ej: data/tenants/inmobiliaria_cowork_alquiler.csv.",
     )
     args = parser.parse_args()
 
@@ -32,6 +37,7 @@ def main() -> None:
     name = args.name.strip() or None
     system_prompt = args.system_prompt.strip() or None
     catalog = args.catalog_csv_path.strip() or None
+    catalog_rent = args.catalog_rent_csv_path.strip() or None
 
     with session_scope() as session:
         row = get_tenant_by_phone_number_id(session, args.phone_number_id)
@@ -43,6 +49,7 @@ def main() -> None:
                     name=name,
                     system_prompt=system_prompt,
                     catalog_csv_path=catalog,
+                    catalog_rent_csv_path=catalog_rent,
                 )
             )
             action = "creado"
@@ -51,6 +58,7 @@ def main() -> None:
             row.name = name
             row.system_prompt = system_prompt
             row.catalog_csv_path = catalog
+            row.catalog_rent_csv_path = catalog_rent
             action = "actualizado"
 
     print(f"Tenant {action}: phone_number_id={args.phone_number_id.strip()!r}")

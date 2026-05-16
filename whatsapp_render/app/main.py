@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from app.catalog import get_cached_compact_catalog
+from app.catalog import get_catalog_for_flow
 from app.conversation import (
     append_conversation_turn,
     build_model_messages,
@@ -18,12 +18,19 @@ from app.conversation import (
 )
 from app.db import dispose_engine, get_engine, init_db
 from app.deepseek_client import chat_completion
+from app.flow_triggers import (
+    apply_captacion_closing,
+    parse_flow_alerts,
+    process_flow_alerts,
+)
 from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
 )
 from app.leads import try_register_lead
 from app.meta_client import send_whatsapp_text_message
+from app.prompts.flow_master import build_flow_system_prompt
+from app.session_state import get_or_create_session, resolve_flow_path, save_session
 from app.tenant_service import (
     TenantContext,
     fetch_tenant_context,
@@ -50,25 +57,10 @@ def _configure_logging() -> None:
         "app.tenant_service",
         "app.meta_client",
         "app.leads",
+        "app.session_state",
+        "app.flow_triggers",
     ):
         logging.getLogger(name).setLevel(logging.INFO)
-
-
-DEFAULT_SYSTEM_PROMPT = (
-    "Eres 'Santi', un asesor inmobiliario experto de la ciudad de Tandil. "
-    "Tu tono es profesional pero cercano (estilo tandilense), educado y eficiente. "
-    "\n\nREGLAS DE ORO:\n"
-    "1. Usa emojis de forma moderada para ser amigable (ej: 🏠,📍,✅).\n"
-    "2. Si el cliente pregunta por una zona, destaca beneficios locales (ej: 'cerca del Calvario', 'zona Uncas', 'vistas a las sierras').\n"
-    "3. RESPUESTA BREVE: En WhatsApp la gente no lee párrafos largos. Usa viñetas (bullet points).\n"
-    "4. DATOS ESTRICTOS: Solo usa la información del catálogo provisto abajo. "
-    "Elegí las propiedades más relevantes para lo que pregunta el cliente (zona, ambientes, precio, etc.). "
-    "Si no tienes el dato (ej. precio o m2), di: 'No tengo ese detalle aquí conmigo, pero puedo consultarlo con el equipo'.\n"
-    "5. FOTOS E INFO: Si piden fotos o más detalles de una propiedad, compartí el link de Fotos del catálogo "
-    "(en una viñeta) y un resumen breve de Caracteristicas. No digas que no hay fotos si el catálogo trae URL.\n"
-    "6. CIERRE: Siempre termina con una pregunta para mantener la charla viva (ej: ¿Te gustaría ir a verla? o ¿Buscás en alguna zona en especial?).\n"
-    "7. PROHIBIDO: No inventes propiedades, precios, direcciones ni links."
-)
 
 
 @asynccontextmanager
@@ -130,6 +122,7 @@ def _legacy_tenant_context() -> TenantContext | None:
         name=None,
         system_prompt=None,
         catalog_csv_path=None,
+        catalog_rent_csv_path=None,
     )
 
 
@@ -152,24 +145,6 @@ def _resolve_tenant(phone_number_id: str) -> TenantContext | None:
         return legacy
 
     return None
-
-
-def _build_system_prompt(
-    *,
-    system_prompt_override: str | None,
-    catalog_csv_path: str | None,
-) -> str:
-
-    row_count, catalog = get_cached_compact_catalog(catalog_csv_path)
-
-    base_prompt = (system_prompt_override or "").strip() or DEFAULT_SYSTEM_PROMPT
-    catalog_header = (
-        f"CATÁLOGO DE PROPIEDADES ({row_count} propiedades; "
-        "incluye características y link de fotos por fila; "
-        "elegí las más relevantes para la consulta del cliente):\n"
-    )
-
-    return f"{base_prompt}\n\n{catalog_header}{catalog}"
 
 
 def _extract_incoming_messages(
@@ -431,15 +406,48 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
 
             continue
 
-        system_prompt = _build_system_prompt(
-            system_prompt_override=ctx.system_prompt,
-            catalog_csv_path=ctx.catalog_csv_path,
+        session = await asyncio.to_thread(
+            get_or_create_session,
+            ctx.phone_number_id,
+            wa_id,
         )
+
+        if session.bot_paused:
+            logger.info(
+                "Bot pausado para wa_id=%s (humano atiende); omitiendo LLM",
+                wa_id,
+            )
+            continue
 
         history = await asyncio.to_thread(
             get_conversation_history,
             ctx.phone_number_id,
             wa_id,
+        )
+
+        flow_path = resolve_flow_path(session, user_text, history)
+        await asyncio.to_thread(
+            save_session,
+            ctx.phone_number_id,
+            wa_id,
+            flow_path=flow_path,
+        )
+
+        row_count, catalog_block = get_catalog_for_flow(
+            flow_path,
+            ctx.catalog_csv_path,
+            ctx.catalog_rent_csv_path,
+        )
+        if row_count:
+            catalog_block = (
+                f"({row_count} propiedades; elegí las más relevantes):\n{catalog_block}"
+            )
+
+        system_prompt = build_flow_system_prompt(
+            tenant_name=ctx.name or "la inmobiliaria",
+            flow_path=flow_path,
+            catalog_block=catalog_block,
+            system_prompt_override=ctx.system_prompt,
         )
 
         model_messages = build_model_messages(
@@ -449,23 +457,28 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         )
 
         logger.info(
-            "Invocando LLM history_messages=%s model_messages=%s",
+            "Invocando LLM flow=%s history=%s messages=%s",
+            flow_path,
             len(history),
             len(model_messages),
         )
 
         answer = await chat_completion(model_messages)
 
+        clean_answer, alerts = parse_flow_alerts(answer)
+        clean_answer = apply_captacion_closing(clean_answer, alerts)
+
         logger.info(
-            "LLM respondio answer_len=%s",
-            len(answer),
+            "LLM respondio answer_len=%s alerts=%s",
+            len(clean_answer),
+            alerts,
         )
 
         await send_whatsapp_text_message(
             access_token=ctx.access_token,
             phone_number_id=ctx.phone_number_id,
             to_wa_id=wa_id,
-            message=answer,
+            message=clean_answer,
         )
 
         await asyncio.to_thread(
@@ -473,7 +486,18 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             ctx.phone_number_id,
             wa_id,
             user_text,
-            answer,
+            clean_answer,
+        )
+
+        await process_flow_alerts(
+            alerts=alerts,
+            session=session,
+            flow_path=flow_path,
+            ctx=ctx,
+            contact_name=contact_name or None,
+            wa_id=wa_id,
+            history=history,
+            current_user_text=user_text,
         )
 
         try:
@@ -484,6 +508,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 catalog_csv_path=ctx.catalog_csv_path,
                 current_user_text=user_text,
                 access_token=ctx.access_token,
+                skip_if_flow_alert_handled=bool(alerts),
             )
         except Exception:
             logger.exception("Error registrando lead wa_id=%s", wa_id)
