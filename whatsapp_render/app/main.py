@@ -17,7 +17,7 @@ from app.conversation import (
     get_conversation_history,
 )
 from app.db import dispose_engine, get_engine, init_db
-from app.groq_client import chat_completion
+from app.deepseek_client import chat_completion
 from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
