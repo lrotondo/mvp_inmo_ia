@@ -433,10 +433,16 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             flow_path=flow_path,
         )
 
-        row_count, catalog_block = get_catalog_for_flow(
+        row_count, catalog_block, catalog_path_used = get_catalog_for_flow(
             flow_path,
             ctx.catalog_csv_path,
             ctx.catalog_rent_csv_path,
+        )
+        logger.info(
+            "Catalogo flow=%s path=%r rows=%s",
+            flow_path,
+            catalog_path_used,
+            row_count,
         )
         if row_count:
             catalog_block = (

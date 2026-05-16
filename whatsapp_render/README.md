@@ -161,6 +161,10 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente y disparan lead + WhatsApp al asesor (`LEAD_WHATSAPP_NOTIFY_TO`).
 
+**Catálogo alquiler:** si `catalog_rent_csv_path` está vacío en el tenant, el backend busca automáticamente `{nombre_venta}_alquiler.csv` en la misma carpeta (ej. `inmobiliaria_cowork_alquiler.csv`). Sin ese archivo, la rama alquiler caía antes en el CSV por defecto de venta.
+
+Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=compra` guardado: el usuario debe decir "quiero alquilar" o borrar la fila en `chat_sessions` para ese `wa_id`.
+
 ## Catálogo y relevancia
 
 - **Todas** las propiedades del CSV van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** por ruta del archivo.

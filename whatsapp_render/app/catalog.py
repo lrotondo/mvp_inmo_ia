@@ -20,8 +20,37 @@ def resolve_catalog_path(catalog_csv_path: str | None) -> Path:
     return (root / p).resolve()
 
 
+def resolve_rent_catalog_path(
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+) -> str | None:
+    """Ruta CSV alquiler: explícita en tenant o convención {nombre}_alquiler.csv junto al de venta."""
+    explicit = (catalog_rent_path or "").strip()
+    if explicit:
+        return explicit
+    sale = (catalog_sale_path or "").strip()
+    if not sale:
+        return None
+    sale_resolved = resolve_catalog_path(sale)
+    candidate = sale_resolved.parent / f"{sale_resolved.stem}_alquiler.csv"
+    if not candidate.exists():
+        return None
+    root = _project_root()
+    try:
+        return str(candidate.relative_to(root)).replace("\\", "/")
+    except ValueError:
+        return str(candidate)
+
+
+def _file_mtime_ns(resolved_path: Path) -> int:
+    if not resolved_path.exists():
+        return 0
+    return resolved_path.stat().st_mtime_ns
+
+
 @lru_cache(maxsize=64)
-def _load_properties_cached(resolved_path_str: str) -> tuple[dict[str, Any], ...]:
+def _load_properties_cached(resolved_path_str: str, mtime_ns: int) -> tuple[dict[str, Any], ...]:
+    path = Path(resolved_path_str)
     path = Path(resolved_path_str)
     if not path.exists():
         return ()
@@ -36,7 +65,8 @@ def _load_properties_cached(resolved_path_str: str) -> tuple[dict[str, Any], ...
 
 def load_properties_for_catalog_path(catalog_csv_path: str | None) -> List[Dict[str, Any]]:
     path = resolve_catalog_path(catalog_csv_path)
-    return list(_load_properties_cached(str(path.resolve())))
+    resolved = path.resolve()
+    return list(_load_properties_cached(str(resolved), _file_mtime_ns(resolved)))
 
 
 def load_properties() -> List[Dict[str, Any]]:
@@ -84,8 +114,8 @@ def format_catalog(hits: List[Dict[str, Any]]) -> str:
 
 
 @lru_cache(maxsize=64)
-def _compact_catalog_cached(resolved_path_str: str) -> tuple[int, str]:
-    rows = _load_properties_cached(resolved_path_str)
+def _compact_catalog_cached(resolved_path_str: str, mtime_ns: int) -> tuple[int, str]:
+    rows = _load_properties_cached(resolved_path_str, mtime_ns)
     text = format_catalog_compact(list(rows))
     if not text:
         return 0, "(catálogo vacío o no disponible.)"
@@ -93,9 +123,9 @@ def _compact_catalog_cached(resolved_path_str: str) -> tuple[int, str]:
 
 
 @lru_cache(maxsize=64)
-def _catalog_search_terms_cached(resolved_path_str: str) -> frozenset[str]:
+def _catalog_search_terms_cached(resolved_path_str: str, mtime_ns: int) -> frozenset[str]:
     terms: set[str] = set()
-    for row in _load_properties_cached(resolved_path_str):
+    for row in _load_properties_cached(resolved_path_str, mtime_ns):
         for field in ("ID", "Direccion", "Barrio"):
             raw = str(row.get(field, "")).lower().strip()
             if not raw:
@@ -111,23 +141,31 @@ def get_cached_compact_catalog(
 ) -> tuple[int, str]:
     """Cantidad de filas y texto compacto del catálogo (cacheado en memoria por ruta)."""
     path = resolve_catalog_path(catalog_csv_path)
-    return _compact_catalog_cached(str(path.resolve()))
+    resolved = path.resolve()
+    mtime = _file_mtime_ns(resolved)
+    return _compact_catalog_cached(str(resolved), mtime)
 
 
 def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
     path = resolve_catalog_path(catalog_csv_path)
-    return _catalog_search_terms_cached(str(path.resolve()))
+    resolved = path.resolve()
+    mtime = _file_mtime_ns(resolved)
+    return _catalog_search_terms_cached(str(resolved), mtime)
 
 
 def get_catalog_for_flow(
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
-) -> tuple[int, str]:
-    """Catálogo según rama: compra -> venta CSV, alquiler -> rent CSV."""
-    path = (flow_path or "").strip().lower()
-    if path == "compra":
-        return get_cached_compact_catalog(catalog_sale_path)
-    if path == "alquiler":
-        return get_cached_compact_catalog(catalog_rent_path)
-    return 0, ""
+) -> tuple[int, str, str | None]:
+    """Catálogo según rama: compra -> venta CSV, alquiler -> rent CSV (con convención _alquiler)."""
+    branch = (flow_path or "").strip().lower()
+    if branch == "compra":
+        used = (catalog_sale_path or "").strip() or None
+        count, block = get_cached_compact_catalog(catalog_sale_path)
+        return count, block, used
+    if branch == "alquiler":
+        used = resolve_rent_catalog_path(catalog_sale_path, catalog_rent_path)
+        count, block = get_cached_compact_catalog(used)
+        return count, block, used
+    return 0, "", None

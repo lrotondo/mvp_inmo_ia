@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.catalog import resolve_rent_catalog_path
 from app.db import get_engine, session_scope
 from app.models import Tenant
 
@@ -35,11 +36,15 @@ def fetch_tenant_context(phone_number_id: str) -> TenantContext | None:
         row = get_tenant_by_phone_number_id(session, phone_number_id)
         if row is None:
             return None
+        rent_path = resolve_rent_catalog_path(
+            row.catalog_csv_path,
+            row.catalog_rent_csv_path,
+        )
         return TenantContext(
             phone_number_id=row.phone_number_id,
             access_token=row.access_token,
             name=row.name,
             system_prompt=row.system_prompt,
             catalog_csv_path=row.catalog_csv_path,
-            catalog_rent_csv_path=row.catalog_rent_csv_path,
+            catalog_rent_csv_path=rent_path,
         )

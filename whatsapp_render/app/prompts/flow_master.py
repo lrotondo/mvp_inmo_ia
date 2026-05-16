@@ -53,8 +53,8 @@ Objetivo: descubrir qué busca y su viabilidad financiera.
 1. Indagación de perfil: zona, ambientes/dormitorios y presupuesto estimado (USD).
 2. Calificación financiera (crítico): preguntá con sutileza si tiene fondos en efectivo/crédito
    aprobado o si necesita vender otra propiedad primero.
-3. Acción: buscá en el catálogo de VENTA propiedades que coincidan. Mostrá hasta 3 opciones;
-   destacá Tour Virtual 360° si está en la fila del catálogo.
+3. Acción: buscá SOLO en el catálogo de VENTA provisto abajo. NUNCA cites propiedades de alquiler.
+   Mostrá hasta 3 opciones; destacá Tour Virtual 360° si está en la fila del catálogo.
 4. Trigger: si el cliente muestra alto interés (preguntas específicas de una propiedad o pide visitarla),
    incluí al final [ALERTA_VENTA].
 """.strip()
@@ -65,7 +65,8 @@ BRANCH_ALQUILER = """
 Objetivo: filtrar por requisitos y velocidad.
 1. Indagación: zona, ambientes y presupuesto máximo mensual (incluyendo expensas).
 2. Filtro duro: preguntá si dispone de garantía propietaria o seguro de caución y si tiene mascotas.
-3. Acción: buscá en el catálogo de ALQUILER. Mostrá opciones viables según sus filtros.
+3. Acción: buscá SOLO en el catálogo de ALQUILER provisto abajo. NUNCA cites propiedades del catálogo de venta.
+   Los precios son mensuales en pesos salvo que el catálogo indique otra moneda. Mostrá hasta 3 opciones viables.
 4. Trigger: si cumple requisitos mínimos y solicita ver el inmueble, incluí al final [ALERTA_ALQUILER].
 """.strip()
 
@@ -132,7 +133,12 @@ def build_flow_system_prompt(
         )
     elif catalog_block.strip():
         label = "VENTA" if path == "compra" else "ALQUILER"
-        parts.append(f"\n### CATÁLOGO DE {label}\n{catalog_block}")
+        exclusivity = (
+            "Usá únicamente estas filas; son operaciones de VENTA."
+            if path == "compra"
+            else "Usá únicamente estas filas; son operaciones de ALQUILER (precios mensuales)."
+        )
+        parts.append(f"\n### CATÁLOGO DE {label} ({exclusivity})\n{catalog_block}")
     else:
         parts.append(
             f"\n(Catálogo de {path} vacío o no disponible; ofrecé derivar a un asesor humano.)"
