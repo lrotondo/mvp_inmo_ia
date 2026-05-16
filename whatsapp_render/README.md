@@ -24,6 +24,8 @@ Servicio para responder WhatsApp con un solo backend:
 | `GROQ_LEAD_MODEL` | no | Default: `llama-3.1-8b-instant` (clasificador de leads) |
 | `APP_ENV` | no | `development` / `dev` / `local` desactiva leads |
 | `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |
+| `LEAD_WHATSAPP_NOTIFY_TO` | no | Número del asesor (solo dígitos, ej. `5492494123456`) para avisar leads por WhatsApp |
+| `LEAD_WHATSAPP_NOTIFY_ENABLED` | no | Default `true`; `false` desactiva solo el aviso al asesor |
 | `META_VERIFY_TOKEN` | si | Token que configuras en Meta para verificar webhook |
 | `META_APP_SECRET` | si | **App Secret** (Basica de la app), no el Client Secret de Login |
 | `META_SKIP_SIGNATURE` | no | Si `1`, omite validacion de firma (solo depuracion) |
@@ -146,7 +148,23 @@ Requiere `DATABASE_URL`. Tras cada respuesta, **solo si el mensaje o el historia
 - Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
 - `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
 - Campos: `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
-- Mismo cliente + propiedad en 24 h → **actualiza** la fila.
+- Mismo cliente + propiedad en 24 h → **actualiza** la fila (sin reenviar aviso).
+
+### Aviso por WhatsApp al equipo
+
+Si `LEAD_WHATSAPP_NOTIFY_TO` está definido (número en formato internacional **solo dígitos**, ej. `5492494123456`), al **crear** un lead con interés real el bot envía un mensaje de texto al asesor con:
+
+- Nombre del contacto (perfil WhatsApp)
+- `wa_id` del cliente
+- Propiedad de referencia (si la detectó el clasificador)
+- Resumen del interés y de la conversación
+
+Usa el mismo `access_token` y `phone_number_id` del tenant (número de la inmobiliaria en Meta). El destinatario debe haber iniciado chat con ese número de WhatsApp Business al menos una vez (ventana de 24 h) o estar en la lista de permitidos de la app.
+
+| Variable | Descripción |
+|----------|-------------|
+| `LEAD_WHATSAPP_NOTIFY_TO` | Número del asesor/equipo |
+| `LEAD_WHATSAPP_NOTIFY_ENABLED` | Default `true`; `false` desactiva solo el aviso |
 
 ```sql
 SELECT contact_name, wa_id, property_ref, interest_summary, conversation_at

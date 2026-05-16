@@ -483,6 +483,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 contact_name=contact_name or None,
                 catalog_csv_path=ctx.catalog_csv_path,
                 current_user_text=user_text,
+                access_token=ctx.access_token,
             )
         except Exception:
             logger.exception("Error registrando lead wa_id=%s", wa_id)

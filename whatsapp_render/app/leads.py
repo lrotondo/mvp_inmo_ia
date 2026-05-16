@@ -14,6 +14,7 @@ from app.catalog import get_cached_compact_catalog, get_catalog_search_terms
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
 from app.groq_client import chat_completion
+from app.meta_client import send_whatsapp_text_message
 from app.models import ClientLead
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ _INTEREST_KEYWORDS = re.compile(
     r"visitar|visita|comprar|compra|alquilar|alquiler|reservar|reserva|"
     r"precio|negociar|financiaci[oó]n|asesor|coordinar|"
     r"interesad[oa]|me\s+interesa|quiero\s+ver|verla|verlo|"
-    r"ubicaci[oó]n|d[oó]nde\s+queda|llamar|humano"
+    r"ubicaci[oó]n|d[oó]nde\s+queda|llamar|humano|persona|"
+    r"hablar\s+con|comunicar|comunicarme|contacto|agente|vendedor"
     r")\b",
     re.I,
 )
@@ -38,7 +40,8 @@ _CLASSIFIER_SYSTEM = (
     '- "interest_summary": string (1-2 oraciones en español sobre el interés y la propiedad)\n'
     '- "conversation_summary": string (2-4 oraciones resumiendo el hilo)\n\n'
     "is_real_interest=true solo si hay intención clara: visitar, comprar, reservar, "
-    "negociar precio, pedir asesor humano, o consulta específica sobre una propiedad/zona concreta. "
+    "negociar precio, pedir hablar con una persona/asesor, o consulta específica sobre una "
+    "propiedad/zona concreta. "
     "false si solo saluda, pregunta genérico sin compromiso, o no hay propiedad ni zona definida."
 )
 
@@ -70,6 +73,40 @@ def _lead_detection_enabled() -> bool:
 
 def _lead_model() -> str:
     return os.environ.get("GROQ_LEAD_MODEL", _DEFAULT_LEAD_MODEL).strip() or _DEFAULT_LEAD_MODEL
+
+
+def _lead_whatsapp_notify_to() -> str:
+    return re.sub(r"\D", "", os.environ.get("LEAD_WHATSAPP_NOTIFY_TO", "").strip())
+
+
+def _lead_whatsapp_notify_enabled() -> bool:
+    if not _lead_whatsapp_notify_to():
+        return False
+    raw = os.environ.get("LEAD_WHATSAPP_NOTIFY_ENABLED", "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def format_lead_notification_message(
+    *,
+    contact_name: str | None,
+    wa_id: str,
+    property_ref: str | None,
+    interest_summary: str,
+    conversation_summary: str,
+) -> str:
+    name = (contact_name or "").strip() or "Sin nombre"
+    prop = (property_ref or "").strip()
+    prop_line = f"Propiedad: {prop}\n" if prop else ""
+    interest = interest_summary.strip()[:800]
+    convo = conversation_summary.strip()[:1200]
+    return (
+        "🔔 Nuevo lead inmobiliario\n\n"
+        f"Cliente: {name}\n"
+        f"WhatsApp: {wa_id}\n"
+        f"{prop_line}\n"
+        f"Interés:\n{interest}\n\n"
+        f"Resumen de la conversación:\n{convo}"
+    )
 
 
 def _text_has_lead_signals(text: str, catalog_terms: frozenset[str]) -> bool:
@@ -154,7 +191,7 @@ def _upsert_lead(
     interest_summary: str,
     conversation_summary: str,
     conversation_at: datetime,
-) -> None:
+) -> bool:
     pnid = phone_number_id.strip()
     wid = wa_id.strip()
     prop = property_ref.strip() or None
@@ -187,7 +224,7 @@ def _upsert_lead(
                 wid,
                 prop,
             )
-            return
+            return False
 
         row = ClientLead(
             phone_number_id=pnid,
@@ -200,6 +237,34 @@ def _upsert_lead(
         )
         session.add(row)
         logger.info("Lead creado wa_id=%s property_ref=%r", wid, prop)
+        return True
+
+
+async def _notify_agent_whatsapp(
+    *,
+    access_token: str,
+    phone_number_id: str,
+    notify_to: str,
+    contact_name: str | None,
+    wa_id: str,
+    property_ref: str,
+    interest_summary: str,
+    conversation_summary: str,
+) -> None:
+    body = format_lead_notification_message(
+        contact_name=contact_name,
+        wa_id=wa_id,
+        property_ref=property_ref or None,
+        interest_summary=interest_summary,
+        conversation_summary=conversation_summary,
+    )
+    await send_whatsapp_text_message(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        to_wa_id=notify_to,
+        message=body,
+    )
+    logger.info("Notificacion lead enviada a %s (cliente wa_id=%s)", notify_to, wa_id)
 
 
 async def try_register_lead(
@@ -209,6 +274,7 @@ async def try_register_lead(
     contact_name: str | None,
     catalog_csv_path: str | None,
     current_user_text: str,
+    access_token: str,
 ) -> None:
     if not _lead_detection_enabled():
         return
@@ -239,7 +305,7 @@ async def try_register_lead(
         return
 
     now = datetime.now(timezone.utc)
-    await asyncio.to_thread(
+    is_new = await asyncio.to_thread(
         _upsert_lead,
         phone_number_id=phone_number_id,
         wa_id=wa_id,
@@ -249,3 +315,36 @@ async def try_register_lead(
         conversation_summary=classification.conversation_summary,
         conversation_at=now,
     )
+
+    if not is_new:
+        return
+
+    if not _lead_whatsapp_notify_enabled() or not _lead_detection_enabled():
+        return
+
+    notify_to = _lead_whatsapp_notify_to()
+    if not notify_to:
+        logger.debug("LEAD_WHATSAPP_NOTIFY_TO no configurado; omitiendo aviso WhatsApp")
+        return
+
+    token = access_token.strip()
+    if not token:
+        logger.warning("No se pudo notificar lead: access_token vacio")
+        return
+
+    try:
+        await _notify_agent_whatsapp(
+            access_token=token,
+            phone_number_id=phone_number_id,
+            notify_to=notify_to,
+            contact_name=contact_name,
+            wa_id=wa_id,
+            property_ref=classification.property_ref,
+            interest_summary=classification.interest_summary,
+            conversation_summary=classification.conversation_summary,
+        )
+    except Exception:
+        logger.exception(
+            "Error enviando notificacion WhatsApp del lead a %s",
+            notify_to,
+        )
