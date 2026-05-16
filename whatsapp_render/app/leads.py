@@ -11,7 +11,8 @@ from typing import Literal
 
 from sqlalchemy import select
 
-from app.catalog import get_cached_compact_catalog, get_catalog_search_terms
+from app.catalog import get_catalog_for_flow, get_catalog_search_terms
+from app.lead_context import extract_property_ref, lead_type_from_flow_path
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
 from app.groq_client import chat_completion
@@ -106,17 +107,24 @@ def format_lead_notification_message(
     prop_line = f"Propiedad: {prop}\n" if prop else ""
     interest = interest_summary.strip()[:800]
     convo = conversation_summary.strip()[:1200]
+    type_labels = {
+        "venta": "COMPRA / VENTA",
+        "alquiler": "ALQUILER",
+        "captacion": "CAPTACIÓN (propietario)",
+    }
     headers = {
-        "venta": "🔔 Lead comprador (venta)",
-        "alquiler": "🔔 Lead inquilino (alquiler)",
+        "venta": "🔔 Lead comprador — venta",
+        "alquiler": "🔔 Lead inquilino — alquiler",
         "captacion": "🔔 Captación — propietario quiere vender",
     }
     header = headers.get(lead_type, "🔔 Nuevo lead inmobiliario")
     capture_line = ""
     if capture_summary and capture_summary.strip():
         capture_line = f"\nDatos del inmueble:\n{capture_summary.strip()[:600]}\n"
+    tipo = type_labels.get(lead_type, lead_type.upper())
     return (
-        f"{header}\n\n"
+        f"{header}\n"
+        f"Tipo de operación: {tipo}\n\n"
         f"Cliente: {name}\n"
         f"WhatsApp: {wa_id}\n"
         f"{prop_line}"
@@ -368,6 +376,8 @@ async def try_register_lead(
     wa_id: str,
     contact_name: str | None,
     catalog_csv_path: str | None,
+    catalog_rent_csv_path: str | None = None,
+    flow_path: str = "compra",
     current_user_text: str,
     access_token: str,
     skip_if_flow_alert_handled: bool = False,
@@ -386,12 +396,21 @@ async def try_register_lead(
     if not any(t.role == "user" for t in history):
         return
 
-    if not should_run_lead_classifier(current_user_text, history, catalog_csv_path):
+    branch = (flow_path or "compra").strip().lower()
+    catalog_for_signals = (
+        catalog_rent_csv_path if branch == "alquiler" else catalog_csv_path
+    )
+    if not should_run_lead_classifier(current_user_text, history, catalog_for_signals):
         logger.info("Lead omitido (sin señales en mensaje/historial) wa_id=%s", wa_id)
         return
 
-    _count, catalog_excerpt = get_cached_compact_catalog(catalog_csv_path)
+    _count, catalog_excerpt, _used = get_catalog_for_flow(
+        branch,
+        catalog_csv_path,
+        catalog_rent_csv_path,
+    )
     conversation_text = format_history_plain(history)
+    full_text = f"{conversation_text}\nCliente: {current_user_text}"
     classification = await _classify_interest(conversation_text, catalog_excerpt)
     if classification is None or not classification.is_real_interest:
         if classification is not None:
@@ -403,16 +422,22 @@ async def try_register_lead(
         return
 
     now = datetime.now(timezone.utc)
-    lead_type: LeadType = "venta"
-    if _ALQUILER_RE.search(conversation_text):
-        lead_type = "alquiler"
+    lead_type = lead_type_from_flow_path(flow_path)
+    property_ref = (classification.property_ref or "").strip()
+    if not property_ref:
+        property_ref = extract_property_ref(
+            full_text,
+            flow_path=flow_path,
+            catalog_sale_path=catalog_csv_path,
+            catalog_rent_path=catalog_rent_csv_path,
+        )
 
     is_new = await asyncio.to_thread(
         _upsert_lead,
         phone_number_id=phone_number_id,
         wa_id=wa_id,
         contact_name=contact_name,
-        property_ref=classification.property_ref,
+        property_ref=property_ref,
         lead_type=lead_type,
         interest_summary=classification.interest_summary,
         conversation_summary=classification.conversation_summary,
@@ -444,7 +469,7 @@ async def try_register_lead(
             notify_to=notify_to,
             contact_name=contact_name,
             wa_id=wa_id,
-            property_ref=classification.property_ref,
+            property_ref=property_ref,
             interest_summary=classification.interest_summary,
             conversation_summary=classification.conversation_summary,
         )

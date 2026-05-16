@@ -5,8 +5,12 @@ import re
 from typing import Literal
 
 from app.conversation import HistoryTurn, format_history_plain
+from app.lead_context import (
+    extract_property_ref,
+    lead_type_from_flow_path,
+)
 from app.leads import LeadType, try_register_flow_alert
-from app.prompts.flow_master import CLOSING_CAPTACION_TEXT
+from app.prompts.flow_master import CLOSING_CAPTACION_TEXT, format_visit_handoff
 from app.session_state import (
     SessionState,
     capture_is_complete,
@@ -50,6 +54,32 @@ def apply_captacion_closing(clean_text: str, alerts: list[AlertTag]) -> str:
     return clean_text
 
 
+def apply_visit_handoff(
+    clean_text: str,
+    alerts: list[AlertTag],
+    *,
+    property_ref: str,
+) -> str:
+    visit_tags = {"ALERTA_VENTA", "ALERTA_ALQUILER"}
+    if not visit_tags.intersection(alerts):
+        return clean_text
+    return format_visit_handoff(property_ref)
+
+
+def _lead_type_for_alert(tag: AlertTag, flow_path: str) -> LeadType:
+    mapped = _TAG_TO_LEAD_TYPE[tag]
+    expected = lead_type_from_flow_path(flow_path)
+    if flow_path in ("compra", "alquiler") and mapped != expected:
+        logger.warning(
+            "Tag %s no coincide con flow_path=%s; usando lead_type=%s",
+            tag,
+            flow_path,
+            expected,
+        )
+        return expected
+    return mapped
+
+
 async def process_flow_alerts(
     *,
     alerts: list[AlertTag],
@@ -65,21 +95,33 @@ async def process_flow_alerts(
     updated_session = session
     bot_paused = session.bot_paused
     conversation_text = format_history_plain(history)
+    full_text = f"{conversation_text}\nCliente: {current_user_text}"
+    property_ref = extract_property_ref(
+        full_text,
+        flow_path=flow_path,
+        catalog_sale_path=ctx.catalog_csv_path,
+        catalog_rent_path=ctx.catalog_rent_csv_path,
+    )
 
     if alerts:
         for tag in alerts:
-            lead_type = _TAG_TO_LEAD_TYPE[tag]
+            lead_type = _lead_type_for_alert(tag, flow_path)
             capture_summary = capture_summary_text(capture) if lead_type == "captacion" else None
-            interest = _interest_for_alert(lead_type, capture, conversation_text)
+            interest = _interest_for_alert(
+                lead_type,
+                capture,
+                property_ref,
+                flow_path,
+            )
             try:
                 await try_register_flow_alert(
                     lead_type=lead_type,
                     phone_number_id=ctx.phone_number_id,
                     wa_id=wa_id,
                     contact_name=contact_name,
-                    property_ref="",
+                    property_ref=property_ref,
                     interest_summary=interest,
-                    conversation_summary=conversation_text[:1200],
+                    conversation_summary=full_text[:1200],
                     capture_summary=capture_summary,
                     access_token=ctx.access_token,
                 )
@@ -128,11 +170,16 @@ async def process_flow_alerts(
 def _interest_for_alert(
     lead_type: LeadType,
     capture: dict,
-    conversation_text: str,
+    property_ref: str,
+    flow_path: str,
 ) -> str:
     if lead_type == "captacion":
         summary = capture_summary_text(capture)
         return summary or "Propietario interesado en vender / tasar su inmueble."
-    if lead_type == "alquiler":
-        return "Inquilino con interés concreto en alquiler (visita o propiedad específica)."
-    return "Comprador con interés concreto en compra (visita o propiedad específica)."
+    op = "alquiler" if lead_type == "alquiler" else "compra/venta"
+    prop = (property_ref or "").strip()
+    prop_clause = f" Propiedad: {prop}." if prop else ""
+    return (
+        f"Cliente en rama {flow_path} ({op}). Solicita coordinar visita; "
+        f"el bot NO agendó día ni horario — debe contactarlo un asesor.{prop_clause}"
+    )

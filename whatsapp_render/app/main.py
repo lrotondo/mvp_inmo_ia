@@ -20,9 +20,11 @@ from app.db import dispose_engine, get_engine, init_db
 from app.deepseek_client import chat_completion
 from app.flow_triggers import (
     apply_captacion_closing,
+    apply_visit_handoff,
     parse_flow_alerts,
     process_flow_alerts,
 )
+from app.lead_context import extract_property_ref
 from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
@@ -472,6 +474,21 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         answer = await chat_completion(model_messages)
 
         clean_answer, alerts = parse_flow_alerts(answer)
+        history_blob = "\n".join(
+            f"{'Cliente' if t.role == 'user' else 'Asesor'}: {t.content}"
+            for t in history
+        )
+        property_ref = extract_property_ref(
+            f"{history_blob}\nCliente: {user_text}",
+            flow_path=flow_path,
+            catalog_sale_path=ctx.catalog_csv_path,
+            catalog_rent_path=ctx.catalog_rent_csv_path,
+        )
+        clean_answer = apply_visit_handoff(
+            clean_answer,
+            alerts,
+            property_ref=property_ref,
+        )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
 
         logger.info(
@@ -512,6 +529,8 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 wa_id=wa_id,
                 contact_name=contact_name or None,
                 catalog_csv_path=ctx.catalog_csv_path,
+                catalog_rent_csv_path=ctx.catalog_rent_csv_path,
+                flow_path=flow_path,
                 current_user_text=user_text,
                 access_token=ctx.access_token,
                 skip_if_flow_alert_handled=bool(alerts),
