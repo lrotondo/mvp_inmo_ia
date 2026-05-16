@@ -151,7 +151,7 @@ def format_history_plain(history: list[HistoryTurn]) -> str:
     return "\n".join(lines)
 
 
-def build_groq_messages(
+def build_model_messages(
     system_prompt: str,
     history: list[HistoryTurn],
     current_user_text: str,
@@ -170,3 +170,7 @@ def build_groq_messages(
         {"role": "user", "content": format_user_message(current_user_text)}
     )
     return messages
+
+
+# Alias por compatibilidad
+build_groq_messages = build_model_messages

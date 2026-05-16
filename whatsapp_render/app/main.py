@@ -13,7 +13,7 @@ from fastapi.responses import PlainTextResponse
 from app.catalog import get_cached_compact_catalog
 from app.conversation import (
     append_conversation_turn,
-    build_groq_messages,
+    build_model_messages,
     get_conversation_history,
 )
 from app.db import dispose_engine, get_engine, init_db
@@ -442,19 +442,19 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             wa_id,
         )
 
-        groq_messages = build_groq_messages(
+        model_messages = build_model_messages(
             system_prompt,
             history,
             user_text,
         )
 
         logger.info(
-            "Invocando LLM history_messages=%s groq_messages=%s",
+            "Invocando LLM history_messages=%s model_messages=%s",
             len(history),
-            len(groq_messages),
+            len(model_messages),
         )
 
-        answer = await chat_completion(groq_messages)
+        answer = await chat_completion(model_messages)
 
         logger.info(
             "LLM respondio answer_len=%s",
