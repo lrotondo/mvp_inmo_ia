@@ -23,6 +23,7 @@ from app.flow_triggers import (
     apply_visit_handoff,
     parse_flow_alerts,
     process_flow_alerts,
+    resolve_flow_alerts,
 )
 from app.lead_context import extract_property_ref
 from app.meta_auth import (
@@ -473,17 +474,25 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
 
         answer = await chat_completion(model_messages)
 
-        clean_answer, alerts = parse_flow_alerts(answer)
-        history_blob = "\n".join(
-            f"{'Cliente' if t.role == 'user' else 'Asesor'}: {t.content}"
-            for t in history
+        clean_answer, raw_alerts = parse_flow_alerts(answer)
+        alerts, interest_classification = await resolve_flow_alerts(
+            raw_alerts,
+            history=history,
+            current_user_text=user_text,
+            flow_path=flow_path,
+            ctx=ctx,
         )
         property_ref = extract_property_ref(
-            f"{history_blob}\nCliente: {user_text}",
+            "",
             flow_path=flow_path,
             catalog_sale_path=ctx.catalog_csv_path,
             catalog_rent_path=ctx.catalog_rent_csv_path,
+            history=history,
+            current_user_text=user_text,
+            user_only=True,
         )
+        if interest_classification and interest_classification.property_ref.strip():
+            property_ref = interest_classification.property_ref.strip()
         clean_answer = apply_visit_handoff(
             clean_answer,
             alerts,
@@ -492,8 +501,9 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         clean_answer = apply_captacion_closing(clean_answer, alerts)
 
         logger.info(
-            "LLM respondio answer_len=%s alerts=%s",
+            "LLM respondio answer_len=%s raw_alerts=%s alerts=%s",
             len(clean_answer),
+            raw_alerts,
             alerts,
         )
 
@@ -521,6 +531,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             wa_id=wa_id,
             history=history,
             current_user_text=user_text,
+            classification=interest_classification,
         )
 
         try:
@@ -533,7 +544,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 flow_path=flow_path,
                 current_user_text=user_text,
                 access_token=ctx.access_token,
-                skip_if_flow_alert_handled=bool(alerts),
+                skip_if_flow_alert_registered=bool(alerts),
             )
         except Exception:
             logger.exception("Error registrando lead wa_id=%s", wa_id)

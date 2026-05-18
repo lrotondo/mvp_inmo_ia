@@ -12,7 +12,14 @@ from typing import Literal
 from sqlalchemy import select
 
 from app.catalog import get_catalog_for_flow, get_catalog_search_terms
-from app.lead_context import extract_property_ref, lead_type_from_flow_path
+from app.lead_context import (
+    conversation_requests_human,
+    conversation_wants_visit,
+    extract_property_ref,
+    format_user_messages_plain,
+    lead_type_from_flow_path,
+    user_signals_real_interest,
+)
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
 from app.groq_client import chat_completion
@@ -187,7 +194,9 @@ def _parse_classifier_json(raw: str) -> LeadClassification | None:
     )
 
 
-async def _classify_interest(conversation_text: str, catalog_excerpt: str) -> LeadClassification | None:
+async def classify_interest(
+    conversation_text: str, catalog_excerpt: str
+) -> LeadClassification | None:
     user_content = (
         f"Catálogo (referencia):\n{catalog_excerpt[:2500]}\n\n"
         f"Conversación:\n{conversation_text[:4000]}"
@@ -205,6 +214,63 @@ async def _classify_interest(conversation_text: str, catalog_excerpt: str) -> Le
     if parsed is None:
         logger.warning("Lead classifier: JSON invalido raw=%s", raw[:500])
     return parsed
+
+
+async def evaluate_lead_interest(
+    *,
+    history: list[HistoryTurn],
+    current_user_text: str,
+    flow_path: str,
+    catalog_csv_path: str | None,
+    catalog_rent_csv_path: str | None,
+) -> LeadClassification | None:
+    """Clasifica interés real (misma barra para alertas de flujo y leads)."""
+    conversation_text = format_history_plain(history)
+    if current_user_text.strip():
+        conversation_text = (
+            f"{conversation_text}\nCliente: {current_user_text}"
+            if conversation_text
+            else f"Cliente: {current_user_text}"
+        )
+
+    branch = (flow_path or "compra").strip().lower()
+    _count, catalog_excerpt, _used = get_catalog_for_flow(
+        branch,
+        catalog_csv_path,
+        catalog_rent_csv_path,
+    )
+    classification = await classify_interest(conversation_text, catalog_excerpt)
+    if classification is not None and classification.is_real_interest:
+        return classification
+
+    if not user_signals_real_interest(history, current_user_text):
+        return classification
+
+    prop = extract_property_ref(
+        "",
+        flow_path=flow_path,
+        catalog_sale_path=catalog_csv_path,
+        catalog_rent_path=catalog_rent_csv_path,
+        history=history,
+        current_user_text=current_user_text,
+        user_only=True,
+    )
+    plain = format_user_messages_plain(history, current_user_text)
+    summary_parts: list[str] = []
+    if conversation_wants_visit(plain):
+        summary_parts.append("Cliente pide visitar o ver un inmueble.")
+    if conversation_requests_human(plain):
+        summary_parts.append("Cliente pide contacto con un asesor humano.")
+    if prop:
+        summary_parts.append(f"Referencia del catálogo: {prop}.")
+    if not summary_parts:
+        summary_parts.append("Cliente muestra interés concreto según señales del mensaje.")
+    return LeadClassification(
+        is_real_interest=True,
+        property_ref=prop,
+        interest_summary=" ".join(summary_parts),
+        conversation_summary=conversation_text[:1200],
+    )
 
 
 def _upsert_lead(
@@ -380,13 +446,14 @@ async def try_register_lead(
     flow_path: str = "compra",
     current_user_text: str,
     access_token: str,
-    skip_if_flow_alert_handled: bool = False,
+    skip_if_flow_alert_registered: bool = False,
 ) -> None:
     if not _lead_detection_enabled():
         return
     if get_engine() is None:
         return
-    if skip_if_flow_alert_handled:
+    if skip_if_flow_alert_registered:
+        logger.debug("Lead classifier omitido (alerta de flujo ya registrada) wa_id=%s", wa_id)
         return
 
     history = get_conversation_history(phone_number_id, wa_id, limit=4)
@@ -404,14 +471,13 @@ async def try_register_lead(
         logger.info("Lead omitido (sin señales en mensaje/historial) wa_id=%s", wa_id)
         return
 
-    _count, catalog_excerpt, _used = get_catalog_for_flow(
-        branch,
-        catalog_csv_path,
-        catalog_rent_csv_path,
+    classification = await evaluate_lead_interest(
+        history=history,
+        current_user_text=current_user_text,
+        flow_path=flow_path,
+        catalog_csv_path=catalog_csv_path,
+        catalog_rent_csv_path=catalog_rent_csv_path,
     )
-    conversation_text = format_history_plain(history)
-    full_text = f"{conversation_text}\nCliente: {current_user_text}"
-    classification = await _classify_interest(conversation_text, catalog_excerpt)
     if classification is None or not classification.is_real_interest:
         if classification is not None:
             logger.info("Lead no registrado (sin interes real) wa_id=%s", wa_id)
@@ -426,10 +492,13 @@ async def try_register_lead(
     property_ref = (classification.property_ref or "").strip()
     if not property_ref:
         property_ref = extract_property_ref(
-            full_text,
+            "",
             flow_path=flow_path,
             catalog_sale_path=catalog_csv_path,
             catalog_rent_path=catalog_rent_csv_path,
+            history=history,
+            current_user_text=current_user_text,
+            user_only=True,
         )
 
     is_new = await asyncio.to_thread(
