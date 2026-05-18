@@ -5,7 +5,7 @@ Servicio para responder WhatsApp con un solo backend:
 - Meta envia `POST` al webhook publico.
 - Se valida verify token (`GET`) y firma `X-Hub-Signature-256` (`POST`).
 - Se identifica la inmobiliaria por `metadata.phone_number_id` del JSON y se busca en Postgres (`tenants`).
-- Cada tenant tiene su `access_token`, `phone_number_id`, prompt opcional y CSV(s) de catálogo (venta + alquiler).
+- Cada tenant tiene su `access_token`, `phone_number_id`, prompt opcional y catálogo de **venta** + **alquiler** (CSV local o Google Sheets).
 - DeepSeek redacta la respuesta con flujo **Espacios360** (3 caminos: compra, alquiler, captación); Graph API envía el mensaje.
 
 ## Endpoints
@@ -32,6 +32,9 @@ Servicio para responder WhatsApp con un solo backend:
 | `META_GRAPH_VERSION` | no | Default: `v22.0` |
 | `META_ACCESS_TOKEN` | no | Fallback si no hay fila en `tenants` o falta `phone_number_id` |
 | `META_PHONE_NUMBER_ID` | no | Debe coincidir con el `phone_number_id` del webhook para usar fallback |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | si usas Sheets | JSON de cuenta de servicio (una línea) para leer planillas |
+| `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
+| `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 
 ## Modelo `tenants` (Postgres)
 
@@ -41,8 +44,8 @@ Columnas principales:
 - `access_token` — token de WhatsApp Cloud API de ese cliente (Fase 1 en texto plano; rotar si se filtra)
 - `name` — opcional
 - `system_prompt` — opcional; si vacío se usa el prompt **Espacios360 Flow** del código
-- `catalog_csv_path` — CSV de **venta** (ej. `data/tenants/inmobiliaria_cowork.csv`)
-- `catalog_rent_csv_path` — CSV de **alquiler** (ej. `data/tenants/inmobiliaria_cowork_alquiler.csv`)
+- `catalog_csv_path` — **Venta**: ruta CSV (`data/tenants/foo.csv`) o URL/ID de Google Sheet
+- `catalog_rent_csv_path` — **Alquiler**: ruta CSV o URL/ID de Google Sheet (obligatorio si venta es Sheet)
 
 En el primer deploy con `DATABASE_URL`, las tablas se crean con `create_all` al arrancar.
 
@@ -73,7 +76,11 @@ CREATE INDEX IF NOT EXISTS ix_chat_sessions_wa_id ON chat_sessions (wa_id);
 Desde la carpeta `whatsapp_render` con `DATABASE_URL` exportada:
 
 ```powershell
+# CSV local
 python -m app.seed_tenant --phone-number-id "TU_PHONE_NUMBER_ID" --access-token "TU_TOKEN" --name "Inmobiliaria Demo" --catalog-csv-path "data/tenants/inmobiliaria_cowork.csv" --catalog-rent-csv-path "data/tenants/inmobiliaria_cowork_alquiler.csv"
+
+# Google Sheets (venta + alquiler en archivos distintos)
+python -m app.seed_tenant --phone-number-id "TU_PHONE_NUMBER_ID" --access-token "TU_TOKEN" --name "Inmobiliaria Demo" --catalog-sheet-url "https://docs.google.com/spreadsheets/d/ID_VENTA/edit" --catalog-rent-sheet-url "https://docs.google.com/spreadsheets/d/ID_ALQUILER/edit"
 ```
 
 Equivalente en SQL (ajusta valores):
@@ -132,9 +139,29 @@ Probar:
 6. Cargar variables de entorno (tabla de arriba).
 7. Deploy; configurar webhook en Meta.
 
-### Actualizar propiedades por tenant
+### Catálogo con Google Sheets (recomendado en producción)
 
-Subir CSV bajo `data/` o `data/tenants/` y setear `catalog_csv_path` en la fila del tenant. Tras cambiar un archivo, reiniciar el servicio si necesitas limpiar cache en memoria (`lru_cache` por ruta).
+1. En [Google Cloud Console](https://console.cloud.google.com/): proyecto → habilitar **Google Sheets API** → crear **cuenta de servicio** → descargar JSON.
+2. En Render: variable `GOOGLE_SERVICE_ACCOUNT_JSON` = contenido del JSON (una sola línea).
+3. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados exactos:
+
+   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Link_Fotos | Tour_360`
+
+4. Compartir cada planilla con el email de la cuenta de servicio (rol **Lector**).
+5. En `tenants`, guardar URL o ID del spreadsheet:
+
+```sql
+UPDATE tenants SET
+  catalog_csv_path = 'https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_VENTA/edit',
+  catalog_rent_csv_path = 'https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_ALQUILER/edit'
+WHERE phone_number_id = 'TU_PHONE_NUMBER_ID';
+```
+
+El backend refresca la planilla cada `CATALOG_CACHE_TTL_SECONDS` (default 5 min) sin redeploy.
+
+### Actualizar propiedades por tenant (CSV local)
+
+Subir CSV bajo `data/tenants/` y setear `catalog_csv_path`. Los cambios en disco se ven al modificar el archivo (cache por fecha de modificación). Para Google Sheets, editar la planilla alcanza; esperar el TTL de cache.
 
 ### Costo y control
 
@@ -161,14 +188,14 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente y disparan lead + WhatsApp al asesor (`LEAD_WHATSAPP_NOTIFY_TO`).
 
-**Catálogo alquiler:** si `catalog_rent_csv_path` está vacío en el tenant, el backend busca automáticamente `{nombre_venta}_alquiler.csv` en la misma carpeta (ej. `inmobiliaria_cowork_alquiler.csv`). Sin ese archivo, la rama alquiler caía antes en el CSV por defecto de venta.
+**Catálogo alquiler:** si `catalog_rent_csv_path` está vacío y **venta es CSV local**, el backend busca `{nombre_venta}_alquiler.csv` en la misma carpeta. Si **venta es Google Sheet**, configurá explícitamente el Sheet de alquiler en `catalog_rent_csv_path`.
 
 Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=compra` guardado: el usuario debe decir "quiero alquilar" o borrar la fila en `chat_sessions` para ese `wa_id`.
 
 ## Catálogo y relevancia
 
-- **Todas** las propiedades del CSV van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** por ruta del archivo.
-- Tras cambiar el CSV en disco, reiniciar el servicio para refrescar la caché.
+- **Todas** las propiedades (CSV o Google Sheet) van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
+- Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
 - El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python). Si el cliente pide fotos, el bot debe enviar la URL del catálogo; WhatsApp puede mostrar vista previa del link (`preview_url` activo cuando la respuesta incluye `http://` o `https://`).
 
 ## Historial de conversación

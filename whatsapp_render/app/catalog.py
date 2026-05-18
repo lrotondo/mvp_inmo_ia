@@ -1,37 +1,106 @@
 from __future__ import annotations
 
-import csv
+import os
 import re
-from functools import lru_cache
+import time
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List
+
+from app.catalog_sources import (
+    CatalogRef,
+    fetch_rows,
+    is_google_sheet_ref,
+    parse_catalog_ref,
+    resolve_csv_path,
+)
+
+_DEFAULT_CACHE_TTL = 300
+_cache_lock = Lock()
+_rows_cache: dict[str, tuple[float, tuple[dict[str, Any], ...]]] = {}
+
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _cache_ttl_seconds() -> int:
+    raw = os.environ.get("CATALOG_CACHE_TTL_SECONDS", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return _DEFAULT_CACHE_TTL
+
+
+def _default_catalog_ref() -> CatalogRef:
+    path = str((_project_root() / "data" / "propiedades_vivas.csv").resolve())
+    return CatalogRef(kind="csv", raw=path, csv_path=path)
+
+
+def _ref_for_path(catalog_path: str | None) -> CatalogRef:
+    ref = parse_catalog_ref(catalog_path)
+    return ref if ref is not None else _default_catalog_ref()
+
+
+def _file_mtime_ns(resolved_path: Path) -> int:
+    if not resolved_path.exists():
+        return 0
+    return resolved_path.stat().st_mtime_ns
+
+
+def _load_rows(ref: CatalogRef) -> tuple[dict[str, Any], ...]:
+    cache_key = ref.cache_key()
+    now = time.monotonic()
+    ttl = _cache_ttl_seconds()
+
+    if ref.kind == "csv":
+        path = resolve_csv_path(ref.csv_path or ref.raw)
+        mtime_ns = _file_mtime_ns(path)
+        cache_key = f"{cache_key}:{mtime_ns}"
+
+    with _cache_lock:
+        cached = _rows_cache.get(cache_key)
+        if cached is not None:
+            loaded_at, rows = cached
+            if ref.kind == "google_sheet" and (now - loaded_at) < ttl:
+                return rows
+            if ref.kind == "csv":
+                return rows
+
+    rows_tuple = tuple(fetch_rows(ref))
+
+    with _cache_lock:
+        _rows_cache[cache_key] = (now, rows_tuple)
+        if len(_rows_cache) > 128:
+            oldest = min(_rows_cache.items(), key=lambda item: item[1][0])
+            _rows_cache.pop(oldest[0], None)
+
+    return rows_tuple
+
+
 def resolve_catalog_path(catalog_csv_path: str | None) -> Path:
-    root = _project_root()
-    if not catalog_csv_path or not str(catalog_csv_path).strip():
-        return root / "data" / "propiedades_vivas.csv"
-    p = Path(str(catalog_csv_path).strip())
-    if p.is_absolute():
-        return p
-    return (root / p).resolve()
+    ref = _ref_for_path(catalog_csv_path)
+    if ref.kind == "google_sheet":
+        return _project_root() / "data" / "propiedades_vivas.csv"
+    return resolve_csv_path(ref.csv_path or ref.raw)
 
 
 def resolve_rent_catalog_path(
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
 ) -> str | None:
-    """Ruta CSV alquiler: explícita en tenant o convención {nombre}_alquiler.csv junto al de venta."""
+    """Ruta o ref de alquiler: explícita en tenant; convención _alquiler.csv solo para CSV."""
     explicit = (catalog_rent_path or "").strip()
     if explicit:
         return explicit
+
     sale = (catalog_sale_path or "").strip()
     if not sale:
         return None
-    sale_resolved = resolve_catalog_path(sale)
+
+    if is_google_sheet_ref(sale):
+        return None
+
+    sale_resolved = resolve_csv_path(sale)
     candidate = sale_resolved.parent / f"{sale_resolved.stem}_alquiler.csv"
     if not candidate.exists():
         return None
@@ -42,31 +111,9 @@ def resolve_rent_catalog_path(
         return str(candidate)
 
 
-def _file_mtime_ns(resolved_path: Path) -> int:
-    if not resolved_path.exists():
-        return 0
-    return resolved_path.stat().st_mtime_ns
-
-
-@lru_cache(maxsize=64)
-def _load_properties_cached(resolved_path_str: str, mtime_ns: int) -> tuple[dict[str, Any], ...]:
-    path = Path(resolved_path_str)
-    path = Path(resolved_path_str)
-    if not path.exists():
-        return ()
-    rows: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            if row.get("ID"):
-                rows.append(row)
-    return tuple(rows)
-
-
 def load_properties_for_catalog_path(catalog_csv_path: str | None) -> List[Dict[str, Any]]:
-    path = resolve_catalog_path(catalog_csv_path)
-    resolved = path.resolve()
-    return list(_load_properties_cached(str(resolved), _file_mtime_ns(resolved)))
+    ref = _ref_for_path(catalog_csv_path)
+    return list(_load_rows(ref))
 
 
 def load_properties() -> List[Dict[str, Any]]:
@@ -74,7 +121,6 @@ def load_properties() -> List[Dict[str, Any]]:
 
 
 def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
-    """Catálogo por fila con datos clave, características y link de fotos (cacheado vía get_cached_compact_catalog)."""
     lines = []
     for row in hits:
         tour = row.get("Tour_360") or row.get("Tour_360_URL") or ""
@@ -113,19 +159,21 @@ def format_catalog(hits: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-@lru_cache(maxsize=64)
-def _compact_catalog_cached(resolved_path_str: str, mtime_ns: int) -> tuple[int, str]:
-    rows = _load_properties_cached(resolved_path_str, mtime_ns)
-    text = format_catalog_compact(list(rows))
+def get_cached_compact_catalog(
+    catalog_csv_path: str | None,
+) -> tuple[int, str]:
+    ref = _ref_for_path(catalog_csv_path)
+    rows = list(_load_rows(ref))
+    text = format_catalog_compact(rows)
     if not text:
         return 0, "(catálogo vacío o no disponible.)"
     return len(rows), text
 
 
-@lru_cache(maxsize=64)
-def _catalog_search_terms_cached(resolved_path_str: str, mtime_ns: int) -> frozenset[str]:
+def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
+    ref = _ref_for_path(catalog_csv_path)
     terms: set[str] = set()
-    for row in _load_properties_cached(resolved_path_str, mtime_ns):
+    for row in _load_rows(ref):
         for field in ("ID", "Direccion", "Barrio"):
             raw = str(row.get(field, "")).lower().strip()
             if not raw:
@@ -136,29 +184,11 @@ def _catalog_search_terms_cached(resolved_path_str: str, mtime_ns: int) -> froze
     return frozenset(terms)
 
 
-def get_cached_compact_catalog(
-    catalog_csv_path: str | None,
-) -> tuple[int, str]:
-    """Cantidad de filas y texto compacto del catálogo (cacheado en memoria por ruta)."""
-    path = resolve_catalog_path(catalog_csv_path)
-    resolved = path.resolve()
-    mtime = _file_mtime_ns(resolved)
-    return _compact_catalog_cached(str(resolved), mtime)
-
-
-def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
-    path = resolve_catalog_path(catalog_csv_path)
-    resolved = path.resolve()
-    mtime = _file_mtime_ns(resolved)
-    return _catalog_search_terms_cached(str(resolved), mtime)
-
-
 def get_catalog_for_flow(
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
 ) -> tuple[int, str, str | None]:
-    """Catálogo según rama: compra -> venta CSV, alquiler -> rent CSV (con convención _alquiler)."""
     branch = (flow_path or "").strip().lower()
     if branch == "compra":
         used = (catalog_sale_path or "").strip() or None
