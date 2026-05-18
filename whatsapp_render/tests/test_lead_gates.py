@@ -3,9 +3,11 @@ from __future__ import annotations
 from app.conversation import HistoryTurn
 from app.flow_triggers import (
     apply_visit_handoff,
+    filter_alerts_by_flow_path,
     filter_alerts_by_real_interest,
     filter_alerts_suppressed_for_browse,
 )
+from app.session_state import SessionState, resolve_flow_path
 from app.lead_context import (
     current_message_is_browse_only,
     extract_property_ref,
@@ -200,6 +202,51 @@ def test_cross_flow_compra_visit_after_switch_qualifies() -> None:
         history,
         "quiero visitar la opción 2",
         flow_path="compra",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
+
+
+def test_filter_drops_alquiler_tag_when_flow_is_compra() -> None:
+    filtered = filter_alerts_by_flow_path(["ALERTA_ALQUILER"], "compra")
+    assert filtered == []
+
+
+def test_filter_keeps_venta_tag_when_flow_is_compra() -> None:
+    classification = LeadClassification(
+        is_real_interest=True,
+        property_ref="ID 4",
+        interest_summary="Visita",
+        conversation_summary="",
+    )
+    filtered = filter_alerts_by_flow_path(
+        filter_alerts_by_real_interest(["ALERTA_VENTA"], classification),
+        "compra",
+    )
+    assert filtered == ["ALERTA_VENTA"]
+
+
+def test_resolve_flow_stays_compra_after_alquiler_history() -> None:
+    session = SessionState(flow_path="compra")
+    history = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+        HistoryTurn(role="user", content="me gusta la opcion 3"),
+    ]
+    path = resolve_flow_path(session, "que opciones para comprar?", history)
+    assert path == "compra"
+
+
+def test_alquiler_visit_in_history_not_in_current_does_not_qualify() -> None:
+    history = [
+        HistoryTurn(role="user", content="quiero visitar el de Don Bosco"),
+        HistoryTurn(role="user", content="que opciones para comprar?"),
+    ]
+    from app.lead_context import qualifies_for_lead_notification
+
+    assert not qualifies_for_lead_notification(
+        history,
+        "que opciones para comprar?",
+        flow_path="alquiler",
         catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
         catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
     )

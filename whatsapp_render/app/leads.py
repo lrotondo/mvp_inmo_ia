@@ -22,7 +22,7 @@ from app.lead_context import (
     lead_type_from_flow_path,
     qualifies_for_lead_notification,
     user_signals_real_interest_current_message,
-    user_signals_real_interest_rent,
+    user_signals_real_interest_rent_current_message,
 )
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
@@ -310,7 +310,7 @@ async def evaluate_lead_interest(
         return classification
 
     has_signals = (
-        user_signals_real_interest_rent(history, current_user_text)
+        user_signals_real_interest_rent_current_message(current_user_text)
         if branch == "alquiler"
         else user_signals_real_interest_current_message(current_user_text)
     )
@@ -336,16 +336,16 @@ async def evaluate_lead_interest(
         current_user_text=current_user_text,
         user_only=True,
     )
-    plain = format_user_messages_plain(history, current_user_text)
+    current = current_user_text.strip()
     summary_parts: list[str] = []
     wants_visit = (
-        conversation_wants_visit_rent(plain)
+        conversation_wants_visit_rent(current)
         if branch == "alquiler"
-        else conversation_wants_visit(plain)
+        else conversation_wants_visit(current)
     )
     if wants_visit:
         summary_parts.append("Cliente pide visitar o ver un inmueble.")
-    if conversation_requests_human(plain):
+    if conversation_requests_human(current):
         summary_parts.append("Cliente pide contacto con un asesor humano.")
     if prop:
         summary_parts.append(f"Referencia del catálogo: {prop}.")
@@ -387,9 +387,6 @@ def _upsert_lead(
             )
             .order_by(ClientLead.conversation_at.desc())
         )
-        if prop:
-            stmt = stmt.where(ClientLead.property_ref == prop)
-
         existing = session.scalars(stmt).first()
 
         if existing is not None:

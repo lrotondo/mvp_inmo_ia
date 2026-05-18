@@ -196,19 +196,6 @@ def save_session(
     )
 
 
-def _user_recently_sought_alquiler(history: list[HistoryTurn], max_user_turns: int = 5) -> bool:
-    seen = 0
-    for turn in reversed(history):
-        if turn.role != "user":
-            continue
-        if _ALQUILER_RE.search(turn.content) or _SWITCH_ALQUILER_RE.search(turn.content):
-            return True
-        seen += 1
-        if seen >= max_user_turns:
-            break
-    return False
-
-
 def _detect_flow_from_text(text: str) -> FlowPath | None:
     body = text.strip()
     if not body:
@@ -243,9 +230,6 @@ def resolve_flow_path(
             return detected
 
     if current != "nuevo":
-        if current == "compra" and _user_recently_sought_alquiler(history):
-            logger.info("Flow path: compra -> alquiler (intención alquiler en historial)")
-            return "alquiler"
         return current
 
     for turn in reversed(history):

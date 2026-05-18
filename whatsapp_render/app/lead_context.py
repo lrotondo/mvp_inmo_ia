@@ -262,13 +262,18 @@ def user_signals_real_interest_rent(
     history: list[HistoryTurn],
     current_user_text: str,
 ) -> bool:
-    """Alquiler: solo visita explícita o pedido de asesor humano (rama acotada)."""
-    user_blob = user_messages_for_flow(history, current_user_text, "alquiler")
-    if not user_blob.strip():
+    """Alquiler: visita/asesor en mensaje actual (evita re-disparar por historial)."""
+    _ = history
+    return user_signals_real_interest_rent_current_message(current_user_text)
+
+
+def user_signals_real_interest_rent_current_message(current_user_text: str) -> bool:
+    current = current_user_text.strip()
+    if not current:
         return False
-    if conversation_wants_visit_rent(user_blob):
+    if conversation_wants_visit_rent(current):
         return True
-    if conversation_requests_human(user_blob):
+    if conversation_requests_human(current):
         return True
     return False
 
@@ -334,7 +339,7 @@ def qualifies_for_lead_notification(
     path = (flow_path or "").strip().lower()
 
     if path == "alquiler":
-        return user_signals_real_interest_rent(history, current_user_text)
+        return user_signals_real_interest_rent_current_message(current_user_text)
 
     if user_signals_real_interest_current_message(current_user_text):
         return True

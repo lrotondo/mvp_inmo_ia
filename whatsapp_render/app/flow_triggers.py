@@ -15,7 +15,7 @@ from app.lead_context import (
     should_suppress_visit_alerts,
     user_messages_for_flow,
     user_signals_real_interest_current_message,
-    user_signals_real_interest_rent,
+    user_signals_real_interest_rent_current_message,
 )
 from app.leads import LeadClassification, LeadType, evaluate_lead_interest, try_register_flow_alert
 from app.waitlist import register_waitlist_entry
@@ -101,6 +101,28 @@ def filter_alerts_by_real_interest(
     return valid
 
 
+def filter_alerts_by_flow_path(
+    alerts: list[AlertTag],
+    flow_path: str,
+) -> list[AlertTag]:
+    """Descarta tags que no corresponden a la rama activa (ej. ALERTA_ALQUILER en compra)."""
+    path = (flow_path or "").strip().lower()
+    if path not in ("compra", "alquiler"):
+        return alerts
+    expected = "ALERTA_VENTA" if path == "compra" else "ALERTA_ALQUILER"
+    kept: list[AlertTag] = []
+    for tag in alerts:
+        if tag in _VISIT_ALERT_TAGS and tag != expected:
+            logger.info(
+                "Alerta %s descartada (no coincide con flow_path=%s)",
+                tag,
+                path,
+            )
+            continue
+        kept.append(tag)
+    return kept
+
+
 def filter_alerts_suppressed_for_browse(
     alerts: list[AlertTag],
     current_user_text: str,
@@ -148,6 +170,7 @@ async def resolve_flow_alerts(
         )
 
     filtered = filter_alerts_by_real_interest(alerts, classification)
+    filtered = filter_alerts_by_flow_path(filtered, flow_path)
     filtered = filter_alerts_suppressed_for_browse(
         filtered,
         current_user_text,
@@ -157,7 +180,7 @@ async def resolve_flow_alerts(
     if (
         path == "alquiler"
         and not filtered
-        and user_signals_real_interest_rent(history, current_user_text)
+        and user_signals_real_interest_rent_current_message(current_user_text)
     ):
         classification = classification or await evaluate_lead_interest(
             history=history,
@@ -265,9 +288,6 @@ async def process_flow_alerts(
                 if classification and classification.conversation_summary.strip()
                 else full_text[:1200]
             )
-            notify_on_update = lead_type == "alquiler" and (
-                user_signals_real_interest_rent(history, current_user_text)
-            )
             try:
                 await try_register_flow_alert(
                     lead_type=lead_type,
@@ -279,7 +299,6 @@ async def process_flow_alerts(
                     conversation_summary=summary,
                     capture_summary=capture_summary,
                     access_token=ctx.access_token,
-                    notify_on_update=notify_on_update,
                 )
             except Exception:
                 logger.exception(
