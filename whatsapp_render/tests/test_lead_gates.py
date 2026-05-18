@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.conversation import HistoryTurn
-from app.flow_triggers import filter_alerts_by_real_interest
+from app.flow_triggers import apply_visit_handoff, filter_alerts_by_real_interest
 from app.lead_context import (
     current_message_is_browse_only,
     extract_property_ref,
@@ -105,3 +105,52 @@ def test_captacion_alert_not_filtered() -> None:
         None,
     )
     assert filtered == ["ALERTA_CAPTACION_PROPIETARIO"]
+
+
+def test_alquiler_mild_interest_does_not_qualify_for_lead() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="me interesa la opción 1"),
+    ]
+    assert not qualifies_for_lead_notification(
+        history,
+        "me interesa la opción 1",
+        flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
+
+
+def test_alquiler_visit_request_qualifies_for_lead() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="quiero visitar el de Don Bosco 1800"),
+    ]
+    assert qualifies_for_lead_notification(
+        history,
+        "quiero visitar el de Don Bosco 1800",
+        flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
+
+
+def test_apply_visit_handoff_skips_replacement_for_alquiler() -> None:
+    llm_text = "Te cuento más de la opción 2. ¿Querés visitarla?"
+    result = apply_visit_handoff(
+        llm_text,
+        ["ALERTA_ALQUILER"],
+        property_ref="ID 6",
+        flow_path="alquiler",
+    )
+    assert result == llm_text
+
+
+def test_apply_visit_handoff_replaces_for_compra() -> None:
+    llm_text = "Genial, coordinamos."
+    result = apply_visit_handoff(
+        llm_text,
+        ["ALERTA_VENTA"],
+        property_ref="ID 4",
+        flow_path="compra",
+    )
+    assert result != llm_text
+    assert "Registré tu interés" in result

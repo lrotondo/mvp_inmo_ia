@@ -15,12 +15,14 @@ from app.catalog import get_catalog_for_flow, get_catalog_search_terms
 from app.lead_context import (
     conversation_requests_human,
     conversation_wants_visit,
+    conversation_wants_visit_rent,
     extract_property_ref,
     format_conversation_for_classifier,
     format_user_messages_plain,
     lead_type_from_flow_path,
     qualifies_for_lead_notification,
     user_signals_real_interest,
+    user_signals_real_interest_rent,
 )
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
@@ -43,7 +45,7 @@ _INTEREST_KEYWORDS = re.compile(
     re.I,
 )
 
-_CLASSIFIER_SYSTEM = (
+_CLASSIFIER_SYSTEM_BASE = (
     "Sos un analista de leads inmobiliarios. "
     "Evaluá SOLO lo que escribió el CLIENTE (líneas 'Cliente:'). "
     "Ignorá por completo requisitos, precios o propiedades que solo aparezcan en el catálogo "
@@ -60,6 +62,21 @@ _CLASSIFIER_SYSTEM = (
     "is_real_interest=false si solo saluda, pide ver opciones genéricas "
     "('decime qué tenés', 'qué hay', 'mostrame'), explora sin elegir, o no nombró una propiedad."
 )
+
+_CLASSIFIER_ALQUILER_NOTE = (
+    "\n\nContexto: flujo ALQUILER (inquilino). "
+    "is_real_interest=true SOLO si pide visitar/ver un inmueble, hablar con asesor humano "
+    "o que lo contacten para coordinar. "
+    "is_real_interest=false si solo explora, pide más opciones, elige favorita "
+    "('me gusta', 'me interesa', 'opción 2') o pide más información sin visita ni asesor."
+)
+
+
+def _classifier_system_for_flow(flow_path: str) -> str:
+    base = _CLASSIFIER_SYSTEM_BASE
+    if (flow_path or "").strip().lower() == "alquiler":
+        return base + _CLASSIFIER_ALQUILER_NOTE
+    return base
 
 _DEFAULT_LEAD_MODEL = "llama-3.1-8b-instant"
 
@@ -200,7 +217,10 @@ def _parse_classifier_json(raw: str) -> LeadClassification | None:
 
 
 async def classify_interest(
-    conversation_text: str, catalog_excerpt: str
+    conversation_text: str,
+    catalog_excerpt: str,
+    *,
+    flow_path: str = "compra",
 ) -> LeadClassification | None:
     user_content = (
         f"Catálogo (referencia):\n{catalog_excerpt[:2500]}\n\n"
@@ -208,7 +228,7 @@ async def classify_interest(
     )
     raw = await chat_completion(
         [
-            {"role": "system", "content": _CLASSIFIER_SYSTEM},
+            {"role": "system", "content": _classifier_system_for_flow(flow_path)},
             {"role": "user", "content": user_content},
         ],
         model=_lead_model(),
@@ -269,7 +289,9 @@ async def evaluate_lead_interest(
         catalog_csv_path,
         catalog_rent_csv_path,
     )
-    classification = await classify_interest(user_conversation, catalog_excerpt)
+    classification = await classify_interest(
+        user_conversation, catalog_excerpt, flow_path=branch
+    )
     classification = _apply_lead_qualification_gate(
         classification,
         history=history,
@@ -281,7 +303,12 @@ async def evaluate_lead_interest(
     if classification is not None and classification.is_real_interest:
         return classification
 
-    if not user_signals_real_interest(history, current_user_text):
+    has_signals = (
+        user_signals_real_interest_rent(history, current_user_text)
+        if branch == "alquiler"
+        else user_signals_real_interest(history, current_user_text)
+    )
+    if not has_signals:
         return classification
 
     if not qualifies_for_lead_notification(
@@ -304,7 +331,12 @@ async def evaluate_lead_interest(
     )
     plain = format_user_messages_plain(history, current_user_text)
     summary_parts: list[str] = []
-    if conversation_wants_visit(plain):
+    wants_visit = (
+        conversation_wants_visit_rent(plain)
+        if branch == "alquiler"
+        else conversation_wants_visit(plain)
+    )
+    if wants_visit:
         summary_parts.append("Cliente pide visitar o ver un inmueble.")
     if conversation_requests_human(plain):
         summary_parts.append("Cliente pide contacto con un asesor humano.")

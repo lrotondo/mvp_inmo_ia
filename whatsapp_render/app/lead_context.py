@@ -18,6 +18,15 @@ _VISIT_RE = re.compile(
     re.I,
 )
 
+# Alquiler: sin "me interesa la/esa" — interés leve no cuenta como visita
+_RENT_VISIT_RE = re.compile(
+    r"\b("
+    r"visitar|visita|verla|verlo|ver\s+la|ver\s+el|coordinar\s+visita|agendar|"
+    r"quiero\s+ver|reservar|reserva"
+    r")\b",
+    re.I,
+)
+
 _HUMAN_CONTACT_RE = re.compile(
     r"\b("
     r"asesor|humano|persona|hablar\s+con|comunicar|comunicarme|contacto|"
@@ -144,6 +153,10 @@ def conversation_wants_visit(conversation_text: str) -> bool:
     return bool(_VISIT_RE.search(conversation_text))
 
 
+def conversation_wants_visit_rent(conversation_text: str) -> bool:
+    return bool(_RENT_VISIT_RE.search(conversation_text))
+
+
 def conversation_requests_human(conversation_text: str) -> bool:
     return bool(_HUMAN_CONTACT_RE.search(conversation_text))
 
@@ -157,6 +170,21 @@ def user_signals_real_interest(
     if not user_blob.strip():
         return False
     if conversation_wants_visit(user_blob):
+        return True
+    if conversation_requests_human(user_blob):
+        return True
+    return False
+
+
+def user_signals_real_interest_rent(
+    history: list[HistoryTurn],
+    current_user_text: str,
+) -> bool:
+    """Alquiler: solo visita explícita o pedido de asesor humano."""
+    user_blob = format_user_messages_plain(history, current_user_text)
+    if not user_blob.strip():
+        return False
+    if conversation_wants_visit_rent(user_blob):
         return True
     if conversation_requests_human(user_blob):
         return True
@@ -199,6 +227,11 @@ def qualifies_for_lead_notification(
     plain = format_user_messages_plain(history, current_user_text)
     if not plain.strip():
         return False
+
+    path = (flow_path or "").strip().lower()
+
+    if path == "alquiler":
+        return user_signals_real_interest_rent(history, current_user_text)
 
     if user_signals_real_interest(history, current_user_text):
         return True

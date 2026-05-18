@@ -497,6 +497,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             clean_answer,
             alerts,
             property_ref=property_ref,
+            flow_path=flow_path,
         )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
 

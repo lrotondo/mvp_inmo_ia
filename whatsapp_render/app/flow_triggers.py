@@ -113,8 +113,12 @@ def apply_visit_handoff(
     alerts: list[AlertTag],
     *,
     property_ref: str,
+    flow_path: str,
 ) -> str:
     if not _VISIT_ALERT_TAGS.intersection(alerts):
+        return clean_text
+    path = (flow_path or "").strip().lower()
+    if path == "alquiler" and "ALERTA_ALQUILER" in alerts:
         return clean_text
     return format_visit_handoff(property_ref)
 
