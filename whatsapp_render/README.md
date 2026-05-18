@@ -197,7 +197,14 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 - **Todas** las propiedades (CSV o Google Sheet) van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
-- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python). Si el cliente pide fotos, el bot debe enviar la URL del catálogo; WhatsApp puede mostrar vista previa del link (`preview_url` activo cuando la respuesta incluye `http://` o `https://`).
+- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
+
+### Vista previa de enlaces (WhatsApp)
+
+- En [`app/meta_client.py`](app/meta_client.py), si la respuesta incluye `https://`, Meta envía el mensaje con `preview_url: true` y WhatsApp puede mostrar una **tarjeta visual** (foto del inmueble).
+- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) instruye al bot a pegar `Link_Fotos` o `Tour_360` en **línea sola**, justo antes de la **primera** propiedad recomendada (URL cruda, sin markdown).
+- WhatsApp suele destacar **una** preview por mensaje: en listados de hasta 3 opciones, solo la primera lleva URL en línea sola.
+- Usá URLs públicas que WhatsApp pueda previsualizar (imágenes accesibles; `images.unsplash.com`, CDN del portal, etc.).
 
 ## Historial de conversación
 
