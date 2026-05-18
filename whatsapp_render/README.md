@@ -184,7 +184,7 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 1. **Triage** (`flow_path=nuevo`): saludo y pregunta si compra, alquila o vende su propiedad.
 2. **Compra** (`compra`): catálogo de venta; calificación financiera; bandera `[ALERTA_VENTA]` si hay interés alto.
-3. **Alquiler** (`alquiler`): catálogo de alquiler; filtro garantía/mascotas; bandera `[ALERTA_ALQUILER]`.
+3. **Alquiler** (`alquiler`): catálogo de alquiler; prioriza mostrar opciones con pocas preguntas; bandera `[ALERTA_ALQUILER]`.
 4. **Captación** (`captacion`): recopila tipo, ubicación y m²/ambientes; cierre fijo y `[ALERTA_CAPTACION_PROPIETARIO]`; **pausa el bot** para ese chat (`bot_paused`).
 
 Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente y disparan lead + WhatsApp al asesor (`LEAD_WHATSAPP_NOTIFY_TO`).
