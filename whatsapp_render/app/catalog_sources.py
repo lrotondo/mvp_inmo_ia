@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
 import os
@@ -8,6 +9,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,71 @@ def rows_from_sheet_values(values: list[list[Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def google_sheet_export_url(ref: CatalogRef) -> str:
+    """Export CSV público (planilla compartida: cualquiera con el enlace puede ver)."""
+    gid = (ref.gid or "0").strip()
+    return (
+        f"https://docs.google.com/spreadsheets/d/{ref.spreadsheet_id}/export"
+        f"?format=csv&gid={gid}"
+    )
+
+
+def rows_from_csv_text(text: str) -> list[dict[str, Any]]:
+    """Parsea CSV (export de Google o archivo) con la misma normalización que archivos locales."""
+    if not text or not text.strip():
+        return []
+    # Google a veces incluye BOM UTF-8
+    cleaned = text.lstrip("\ufeff")
+    if cleaned.lstrip().lower().startswith("<!doctype") or "<html" in cleaned[:800].lower():
+        return []
+    rows: list[dict[str, Any]] = []
+    reader = csv.DictReader(io.StringIO(cleaned))
+    for row in reader:
+        normalized = {
+            _normalize_header(k): (v or "").strip()
+            for k, v in row.items()
+            if k
+        }
+        if normalized.get("ID"):
+            rows.append(normalized)
+    return rows
+
+
+def fetch_rows_from_google_sheet_public(ref: CatalogRef) -> list[dict[str, Any]]:
+    """
+    Lee planilla vía export CSV sin autenticación.
+    Requiere acceso general: cualquiera con el enlace = Lector (o publicada en la web).
+    """
+    if not ref.spreadsheet_id:
+        return []
+    url = google_sheet_export_url(ref)
+    try:
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            response = client.get(url)
+            response.raise_for_status()
+        rows = rows_from_csv_text(response.text)
+        logger.info(
+            "catalog_fetch source=google_sheet_public spreadsheet_id=%s gid=%s rows=%s",
+            ref.spreadsheet_id,
+            ref.gid or "0",
+            len(rows),
+        )
+        return rows
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Export CSV publico HTTP %s spreadsheet_id=%s (¿enlace con permiso de lectura?)",
+            exc.response.status_code,
+            ref.spreadsheet_id,
+        )
+        return []
+    except Exception:
+        logger.exception(
+            "Error export CSV publico spreadsheet_id=%s",
+            ref.spreadsheet_id,
+        )
+        return []
+
+
 def _load_credentials():
     from google.oauth2 import service_account
 
@@ -169,18 +237,10 @@ def _load_credentials():
     return None
 
 
-def fetch_rows_from_google_sheet(ref: CatalogRef) -> list[dict[str, Any]]:
-    if not ref.spreadsheet_id:
-        logger.warning("Google Sheet sin spreadsheet_id ref=%r", ref.raw)
-        return []
-
+def fetch_rows_from_google_sheet_api(ref: CatalogRef) -> list[dict[str, Any]]:
+    """API con cuenta de servicio (opcional; si la planilla se compartió con ese email)."""
     credentials = _load_credentials()
     if credentials is None:
-        logger.warning(
-            "Sin credenciales Google (GOOGLE_SERVICE_ACCOUNT_JSON); "
-            "no se puede leer sheet %s",
-            ref.spreadsheet_id,
-        )
         return []
 
     try:
@@ -212,17 +272,40 @@ def fetch_rows_from_google_sheet(ref: CatalogRef) -> list[dict[str, Any]]:
         values = result.get("values", [])
         rows = rows_from_sheet_values(values)
         logger.info(
-            "catalog_fetch source=google_sheet spreadsheet_id=%s rows=%s",
+            "catalog_fetch source=google_sheet_api spreadsheet_id=%s rows=%s",
             ref.spreadsheet_id,
             len(rows),
         )
         return rows
     except Exception:
         logger.exception(
-            "Error leyendo Google Sheet spreadsheet_id=%s",
+            "Error leyendo Google Sheet API spreadsheet_id=%s",
             ref.spreadsheet_id,
         )
         return []
+
+
+def fetch_rows_from_google_sheet(ref: CatalogRef) -> list[dict[str, Any]]:
+    if not ref.spreadsheet_id:
+        logger.warning("Google Sheet sin spreadsheet_id ref=%r", ref.raw)
+        return []
+
+    rows = fetch_rows_from_google_sheet_public(ref)
+    if rows:
+        return rows
+
+    rows = fetch_rows_from_google_sheet_api(ref)
+    if rows:
+        return rows
+
+    if _load_credentials() is None:
+        logger.warning(
+            "Sheet %s sin filas: export publico fallo y no hay "
+            "GOOGLE_SERVICE_ACCOUNT_JSON. Verifica que la planilla sea "
+            "'Cualquiera con el enlace' como Lector.",
+            ref.spreadsheet_id,
+        )
+    return []
 
 
 def fetch_rows_from_csv(ref: CatalogRef) -> list[dict[str, Any]]:
@@ -230,17 +313,8 @@ def fetch_rows_from_csv(ref: CatalogRef) -> list[dict[str, Any]]:
     if not path.exists():
         logger.warning("CSV de catalogo no existe: %s", path)
         return []
-    rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            normalized = {
-                _normalize_header(k): (v or "").strip()
-                for k, v in row.items()
-                if k
-            }
-            if normalized.get("ID"):
-                rows.append(normalized)
+        rows = rows_from_csv_text(handle.read())
     logger.info("catalog_fetch source=csv path=%s rows=%s", path, len(rows))
     return rows
 

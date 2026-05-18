@@ -32,7 +32,7 @@ Servicio para responder WhatsApp con un solo backend:
 | `META_GRAPH_VERSION` | no | Default: `v22.0` |
 | `META_ACCESS_TOKEN` | no | Fallback si no hay fila en `tenants` o falta `phone_number_id` |
 | `META_PHONE_NUMBER_ID` | no | Debe coincidir con el `phone_number_id` del webhook para usar fallback |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | si usas Sheets | JSON de cuenta de servicio (una línea) para leer planillas |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | opcional | Solo planillas privadas; con enlace público (Lector) no hace falta |
 | `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 
@@ -141,14 +141,13 @@ Probar:
 
 ### Catálogo con Google Sheets (recomendado en producción)
 
-1. En [Google Cloud Console](https://console.cloud.google.com/): proyecto → habilitar **Google Sheets API** → crear **cuenta de servicio** → descargar JSON.
-2. En Render: variable `GOOGLE_SERVICE_ACCOUNT_JSON` = contenido del JSON (una sola línea).
-3. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados exactos:
+1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados exactos:
 
    `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Link_Fotos | Tour_360`
 
-4. Compartir cada planilla con el email de la cuenta de servicio (rol **Lector**).
-5. En `tenants`, guardar URL o ID del spreadsheet:
+2. En cada planilla: **Compartir** → acceso general **Cualquiera con el enlace** → rol **Lector** (así el backend puede leer vía export CSV sin cuenta de servicio).
+
+3. En `tenants`, guardar URL o ID del spreadsheet:
 
 ```sql
 UPDATE tenants SET
@@ -158,6 +157,8 @@ WHERE phone_number_id = 'TU_PHONE_NUMBER_ID';
 ```
 
 El backend refresca la planilla cada `CATALOG_CACHE_TTL_SECONDS` (default 5 min) sin redeploy.
+
+**Opcional:** si las planillas son privadas (solo usuarios invitados), configurá `GOOGLE_SERVICE_ACCOUNT_JSON` en Render y compartí cada planilla con el email de la cuenta de servicio; el backend usará la API como respaldo si el export público no alcanza.
 
 ### Actualizar propiedades por tenant (CSV local)
 

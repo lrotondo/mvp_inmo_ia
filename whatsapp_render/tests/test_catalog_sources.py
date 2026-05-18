@@ -6,8 +6,10 @@ from unittest.mock import patch
 from app.catalog import _load_rows, get_cached_compact_catalog
 from app.catalog_sources import (
     CatalogRef,
+    google_sheet_export_url,
     is_google_sheet_ref,
     parse_catalog_ref,
+    rows_from_csv_text,
     rows_from_sheet_values,
 )
 
@@ -33,6 +35,26 @@ class TestParseCatalogRef(unittest.TestCase):
     def test_is_google_sheet_ref(self) -> None:
         self.assertTrue(is_google_sheet_ref("https://docs.google.com/spreadsheets/d/abc/edit"))
         self.assertFalse(is_google_sheet_ref("data/tenants/foo.csv"))
+
+
+class TestGoogleSheetPublicExport(unittest.TestCase):
+    def test_export_url_includes_gid(self) -> None:
+        ref = CatalogRef(
+            kind="google_sheet",
+            raw="https://docs.google.com/spreadsheets/d/abc123/edit#gid=42",
+            spreadsheet_id="abc123",
+            gid="42",
+        )
+        url = google_sheet_export_url(ref)
+        self.assertIn("abc123", url)
+        self.assertIn("gid=42", url)
+        self.assertIn("format=csv", url)
+
+    def test_rows_from_csv_text(self) -> None:
+        csv_text = "ID,Direccion,Barrio,Precio\n1,Calle 1,Centro,100\n"
+        rows = rows_from_csv_text(csv_text)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ID"], "1")
 
 
 class TestRowsFromSheetValues(unittest.TestCase):
