@@ -16,8 +16,10 @@ from app.lead_context import (
     conversation_requests_human,
     conversation_wants_visit,
     extract_property_ref,
+    format_conversation_for_classifier,
     format_user_messages_plain,
     lead_type_from_flow_path,
+    qualifies_for_lead_notification,
     user_signals_real_interest,
 )
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
@@ -43,17 +45,20 @@ _INTEREST_KEYWORDS = re.compile(
 
 _CLASSIFIER_SYSTEM = (
     "Sos un analista de leads inmobiliarios. "
-    "Evaluá si el cliente muestra interés real de compra o alquiler concreto. "
+    "Evaluá SOLO lo que escribió el CLIENTE (líneas 'Cliente:'). "
+    "Ignorá por completo requisitos, precios o propiedades que solo aparezcan en el catálogo "
+    "o que el asesor bot haya sugerido sin confirmación del cliente. "
     "Respondé ÚNICAMENTE con un objeto JSON válido (sin markdown, sin texto extra) "
     "con estas claves exactas:\n"
     '- "is_real_interest": boolean\n'
-    '- "property_ref": string (ID o dirección del catálogo; "" si no hay una concreta)\n'
-    '- "interest_summary": string (1-2 oraciones en español sobre el interés y la propiedad)\n'
-    '- "conversation_summary": string (2-4 oraciones resumiendo el hilo)\n\n'
-    "is_real_interest=true solo si hay intención clara: visitar, comprar, reservar, "
-    "negociar precio, pedir hablar con una persona/asesor, o consulta específica sobre una "
-    "propiedad/zona concreta. "
-    "false si solo saluda, pregunta genérico sin compromiso, o no hay propiedad ni zona definida."
+    '- "property_ref": string (ID o dirección del catálogo SOLO si el cliente la nombró; "" si no)\n'
+    '- "interest_summary": string (1-2 oraciones en español sobre lo que EL CLIENTE dijo)\n'
+    '- "conversation_summary": string (2-4 oraciones resumiendo solo mensajes del cliente)\n\n'
+    "is_real_interest=true solo si el CLIENTE, con sus palabras, muestra intención clara: "
+    "visitar, reservar, negociar, pedir un asesor humano, o elegir una propiedad concreta "
+    "(ID, dirección o 'me interesa esa/la de X'). "
+    "is_real_interest=false si solo saluda, pide ver opciones genéricas "
+    "('decime qué tenés', 'qué hay', 'mostrame'), explora sin elegir, o no nombró una propiedad."
 )
 
 _DEFAULT_LEAD_MODEL = "llama-3.1-8b-instant"
@@ -216,6 +221,36 @@ async def classify_interest(
     return parsed
 
 
+def _apply_lead_qualification_gate(
+    classification: LeadClassification | None,
+    *,
+    history: list[HistoryTurn],
+    current_user_text: str,
+    flow_path: str,
+    catalog_csv_path: str | None,
+    catalog_rent_csv_path: str | None,
+) -> LeadClassification | None:
+    if classification is None or not classification.is_real_interest:
+        return classification
+    if qualifies_for_lead_notification(
+        history,
+        current_user_text,
+        flow_path=flow_path,
+        catalog_sale_path=catalog_csv_path,
+        catalog_rent_path=catalog_rent_csv_path,
+    ):
+        return classification
+    logger.info(
+        "Lead descartado (puerta determinista): clasificador=true pero sin intencion concreta del cliente"
+    )
+    return LeadClassification(
+        is_real_interest=False,
+        property_ref="",
+        interest_summary=classification.interest_summary,
+        conversation_summary=classification.conversation_summary,
+    )
+
+
 async def evaluate_lead_interest(
     *,
     history: list[HistoryTurn],
@@ -225,13 +260,8 @@ async def evaluate_lead_interest(
     catalog_rent_csv_path: str | None,
 ) -> LeadClassification | None:
     """Clasifica interés real (misma barra para alertas de flujo y leads)."""
-    conversation_text = format_history_plain(history)
-    if current_user_text.strip():
-        conversation_text = (
-            f"{conversation_text}\nCliente: {current_user_text}"
-            if conversation_text
-            else f"Cliente: {current_user_text}"
-        )
+    user_conversation = format_conversation_for_classifier(history, current_user_text)
+    conversation_summary = user_conversation[:1200]
 
     branch = (flow_path or "compra").strip().lower()
     _count, catalog_excerpt, _used = get_catalog_for_flow(
@@ -239,11 +269,28 @@ async def evaluate_lead_interest(
         catalog_csv_path,
         catalog_rent_csv_path,
     )
-    classification = await classify_interest(conversation_text, catalog_excerpt)
+    classification = await classify_interest(user_conversation, catalog_excerpt)
+    classification = _apply_lead_qualification_gate(
+        classification,
+        history=history,
+        current_user_text=current_user_text,
+        flow_path=flow_path,
+        catalog_csv_path=catalog_csv_path,
+        catalog_rent_csv_path=catalog_rent_csv_path,
+    )
     if classification is not None and classification.is_real_interest:
         return classification
 
     if not user_signals_real_interest(history, current_user_text):
+        return classification
+
+    if not qualifies_for_lead_notification(
+        history,
+        current_user_text,
+        flow_path=flow_path,
+        catalog_sale_path=catalog_csv_path,
+        catalog_rent_path=catalog_rent_csv_path,
+    ):
         return classification
 
     prop = extract_property_ref(
@@ -269,7 +316,7 @@ async def evaluate_lead_interest(
         is_real_interest=True,
         property_ref=prop,
         interest_summary=" ".join(summary_parts),
-        conversation_summary=conversation_text[:1200],
+        conversation_summary=conversation_summary,
     )
 
 
@@ -446,6 +493,7 @@ async def try_register_lead(
     flow_path: str = "compra",
     current_user_text: str,
     access_token: str,
+    history: list[HistoryTurn] | None = None,
     skip_if_flow_alert_registered: bool = False,
 ) -> None:
     if not _lead_detection_enabled():
@@ -456,7 +504,8 @@ async def try_register_lead(
         logger.debug("Lead classifier omitido (alerta de flujo ya registrada) wa_id=%s", wa_id)
         return
 
-    history = get_conversation_history(phone_number_id, wa_id, limit=4)
+    if history is None:
+        history = get_conversation_history(phone_number_id, wa_id, limit=4)
     if not history:
         return
 

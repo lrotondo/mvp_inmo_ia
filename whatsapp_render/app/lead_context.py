@@ -26,6 +26,25 @@ _HUMAN_CONTACT_RE = re.compile(
     re.I,
 )
 
+_BROWSE_ONLY_RE = re.compile(
+    r"\b("
+    r"dec[ií]me\s+qu[eé]\s+ten[eé]s|qu[eé]\s+ten[eé]s|qu[eé]\s+hay|"
+    r"ten[eé]s\s+algo|alguna\s+opci[oó]n|ver\s+opci[oó]nes|"
+    r"mostr[aá](?:me)?\s+opci[oó]nes|qu[eé]\s+disponible|mostr[aá]me"
+    r")\b",
+    re.I,
+)
+
+_PROPERTY_CHOICE_RE = re.compile(
+    r"\b("
+    r"me\s+interesa|me\s+gusta|me\s+cierra|me\s+quedo|"
+    r"quiero\s+(?:esa|ese|el|la|av\.?|calle)|"
+    r"esa\s+(?:casa|depto|propiedad)|la\s+de\s+|"
+    r"opcion\s+\d|opci[oó]n\s+\d|id\s*\d"
+    r")\b",
+    re.I,
+)
+
 _NO_DEFINED_ZONE_RE = re.compile(
     r"\b("
     r"no\s+tengo\s+zona|sin\s+zona\s+definida|no\s+tengo\s+barrio|"
@@ -141,4 +160,75 @@ def user_signals_real_interest(
         return True
     if conversation_requests_human(user_blob):
         return True
+    return False
+
+
+def format_conversation_for_classifier(
+    history: list[HistoryTurn],
+    current_user_text: str = "",
+) -> str:
+    """Solo mensajes del cliente — el asesor bot no cuenta como intención del usuario."""
+    lines: list[str] = []
+    for turn in history:
+        if turn.role == "user" and turn.content.strip():
+            lines.append(f"Cliente: {turn.content.strip()}")
+    if current_user_text.strip():
+        lines.append(f"Cliente: {current_user_text.strip()}")
+    return "\n".join(lines)
+
+
+def current_message_is_browse_only(current_user_text: str) -> bool:
+    body = current_user_text.strip()
+    if not body:
+        return False
+    return bool(_BROWSE_ONLY_RE.search(body))
+
+
+def qualifies_for_lead_notification(
+    history: list[HistoryTurn],
+    current_user_text: str,
+    *,
+    flow_path: str,
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+) -> bool:
+    """
+    Puerta determinista tras el clasificador LLM.
+    Evita leads por 'decime qué tenés', datos inferidos del catálogo o mensajes del bot.
+    """
+    plain = format_user_messages_plain(history, current_user_text)
+    if not plain.strip():
+        return False
+
+    if user_signals_real_interest(history, current_user_text):
+        return True
+
+    current = current_user_text.strip()
+    if current and current_message_is_browse_only(current):
+        if not _PROPERTY_CHOICE_RE.search(current):
+            if not conversation_wants_visit(current) and not conversation_requests_human(current):
+                return False
+
+    prop = extract_property_ref(
+        "",
+        flow_path=flow_path,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+        history=history,
+        current_user_text=current_user_text,
+        user_only=True,
+    )
+    if not prop:
+        return False
+
+    if _PROPERTY_CHOICE_RE.search(plain):
+        return True
+    if conversation_wants_visit(plain) or conversation_requests_human(plain):
+        return True
+
+    # ID o dirección mencionada explícitamente por el cliente (no solo barrio suelto)
+    prop_lower = prop.lower()
+    if prop_lower in plain.lower():
+        if len(prop) >= 10 or any(ch.isdigit() for ch in prop):
+            return True
     return False

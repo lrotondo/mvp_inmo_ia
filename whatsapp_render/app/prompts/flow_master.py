@@ -22,6 +22,9 @@ Usá [ALERTA_VENTA] o [ALERTA_ALQUILER] SOLO si el cliente (en su mensaje, no vo
 - pide visitar o ver un inmueble concreto (ID/dirección del catálogo), o
 - pide que lo contacte un asesor/persona humana, o
 - muestra interés firme y específico en una propiedad ya mencionada (más detalle, reserva, negociar).
+
+NUNCA uses la bandera cuando vos mostrás opciones por primera vez, respondés "decime qué tenés",
+o el cliente solo pidió ver qué hay disponible sin elegir una propiedad.
 """.strip()
 
 MASTER_PREFIX_TEMPLATE = """
@@ -88,6 +91,7 @@ Objetivo: filtrar por requisitos y velocidad.
 2. Filtro duro: preguntá si dispone de garantía propietaria o seguro de caución y si tiene mascotas.
 3. Acción: buscá SOLO en el catálogo de ALQUILER provisto abajo. NUNCA cites propiedades del catálogo de venta.
    Los precios son mensuales en pesos salvo que el catálogo indique otra moneda. Mostrá hasta 3 opciones viables.
+   Si el cliente solo pide "qué tenés" o ver opciones, mostrá el catálogo SIN incluir [ALERTA_ALQUILER].
 4. Trigger: solo si el cliente pide visitar un inmueble concreto, hablar con un asesor, o confirma
    interés firme en una opción ya mostrada (con ID/dirección), derivá al asesor humano (sin agendar)
    e incluí al final [ALERTA_ALQUILER] (nunca [ALERTA_VENTA]). No uses la bandera mientras solo

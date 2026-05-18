@@ -3,8 +3,10 @@ from __future__ import annotations
 from app.conversation import HistoryTurn
 from app.flow_triggers import filter_alerts_by_real_interest
 from app.lead_context import (
+    current_message_is_browse_only,
     extract_property_ref,
     format_user_messages_plain,
+    qualifies_for_lead_notification,
     user_declined_zone_preference,
 )
 from app.leads import LeadClassification
@@ -81,6 +83,20 @@ def test_filter_keeps_visit_alert_with_real_interest() -> None:
         classification,
     )
     assert filtered == ["ALERTA_ALQUILER"]
+
+
+def test_browse_message_does_not_qualify_for_lead() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+    ]
+    assert current_message_is_browse_only("decime que tenés")
+    assert not qualifies_for_lead_notification(
+        history,
+        "decime que tenés",
+        flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
 
 
 def test_captacion_alert_not_filtered() -> None:

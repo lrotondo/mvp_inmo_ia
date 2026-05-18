@@ -514,14 +514,6 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             message=clean_answer,
         )
 
-        await asyncio.to_thread(
-            append_conversation_turn,
-            ctx.phone_number_id,
-            wa_id,
-            user_text,
-            clean_answer,
-        )
-
         await process_flow_alerts(
             alerts=alerts,
             session=session,
@@ -544,10 +536,19 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 flow_path=flow_path,
                 current_user_text=user_text,
                 access_token=ctx.access_token,
+                history=history,
                 skip_if_flow_alert_registered=bool(alerts),
             )
         except Exception:
             logger.exception("Error registrando lead wa_id=%s", wa_id)
+
+        await asyncio.to_thread(
+            append_conversation_turn,
+            ctx.phone_number_id,
+            wa_id,
+            user_text,
+            clean_answer,
+        )
 
         logger.info(
             "Respuesta enviada a wa_id=%s",
