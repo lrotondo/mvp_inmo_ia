@@ -26,6 +26,8 @@ Servicio para responder WhatsApp con un solo backend:
 | `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |
 | `LEAD_WHATSAPP_NOTIFY_TO` | no | Número del asesor (solo dígitos, ej. `5492494123456`) para avisar leads por WhatsApp |
 | `LEAD_WHATSAPP_NOTIFY_ENABLED` | no | Default `true`; `false` desactiva solo el aviso al asesor |
+| `WAITLIST_EXPORT_SECRET` | no | Secreto para `GET /admin/waitlist/export.csv` (header `X-Admin-Secret`) |
+| `WAITLIST_EXPORT_DEFAULT_DAYS` | no | Default `7` — ventana del CSV de lista de espera |
 | `META_VERIFY_TOKEN` | si | Token que configuras en Meta para verificar webhook |
 | `META_APP_SECRET` | si | **App Secret** (Basica de la app), no el Client Secret de Login |
 | `META_SKIP_SIGNATURE` | no | Si `1`, omite validacion de firma (solo depuracion) |
@@ -242,4 +244,38 @@ SELECT contact_name, wa_id, property_ref, interest_summary, conversation_at
 FROM client_leads
 WHERE phone_number_id = 'TU_PHONE_NUMBER_ID'
 ORDER BY conversation_at DESC;
+```
+
+## Lista de espera (`client_waitlist`)
+
+Flujo en **compra** y **alquiler** cuando el cliente vio opciones del catálogo y **ninguna le encaja**:
+
+1. El bot resume necesidades (zona, presupuesto, ambientes, etc.) de la rama actual.
+2. Confirma con el cliente y pregunta si quiere agregar algo.
+3. Ofrece avisarlo cuando aparezca algo acorde.
+4. Si acepta, el LLM incluye `[LISTA_ESPERA]` y se guarda en Postgres.
+
+Tabla `client_waitlist`: `seek_type` (`venta` / `alquiler`), `requirements_json`, `requirements_summary`, `conversation_summary`, `status` (default `active`). Un registro activo por cliente y tipo se **actualiza** al re-registrar.
+
+### Export CSV (informe semanal manual)
+
+Requiere `WAITLIST_EXPORT_SECRET` y `DATABASE_URL`.
+
+```bash
+curl -H "X-Admin-Secret: TU_SECRETO" \
+  "https://TU_SERVICIO/admin/waitlist/export.csv?phone_number_id=TU_PHONE_NUMBER_ID&days=7" \
+  -o waitlist_semana.csv
+```
+
+| Parámetro | Descripción |
+|-----------|-------------|
+| `phone_number_id` | Obligatorio — tenant Meta |
+| `days` | Últimos N días (default `WAITLIST_EXPORT_DEFAULT_DAYS`, 7) |
+| `include_all=1` | Incluir estados distintos de `active` |
+
+```sql
+SELECT created_at, seek_type, contact_name, wa_id, requirements_summary, status
+FROM client_waitlist
+WHERE phone_number_id = 'TU_PHONE_NUMBER_ID'
+ORDER BY created_at DESC;
 ```

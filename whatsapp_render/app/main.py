@@ -7,8 +7,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, Response
 
 from app.catalog import get_catalog_for_flow
 from app.conversation import (
@@ -23,8 +23,10 @@ from app.flow_triggers import (
     apply_visit_handoff,
     parse_flow_alerts,
     process_flow_alerts,
+    process_waitlist_registration,
     resolve_flow_alerts,
 )
+from app.waitlist import fetch_waitlist_rows, waitlist_rows_to_csv
 from app.lead_context import extract_property_ref
 from app.meta_auth import (
     validate_meta_signature,
@@ -110,6 +112,54 @@ def health() -> dict[str, str]:
         "status": "ok",
         "db": "on" if get_engine() is not None else "off",
     }
+
+
+def _waitlist_export_secret() -> str:
+    return os.environ.get("WAITLIST_EXPORT_SECRET", "").strip()
+
+
+def _waitlist_export_default_days() -> int:
+    raw = os.environ.get("WAITLIST_EXPORT_DEFAULT_DAYS", "7").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 7
+
+
+@app.get("/admin/waitlist/export.csv")
+def export_waitlist_csv(
+    phone_number_id: str = Query(..., min_length=1),
+    days: int | None = Query(None, ge=1, le=365),
+    include_all: int = Query(0, ge=0, le=1),
+    x_admin_secret: str | None = Header(None, alias="X-Admin-Secret"),
+) -> Response:
+    secret = _waitlist_export_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="WAITLIST_EXPORT_SECRET no configurado",
+        )
+    if (x_admin_secret or "").strip() != secret:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    if get_engine() is None:
+        raise HTTPException(status_code=503, detail="DATABASE_URL no configurada")
+
+    period = days if days is not None else _waitlist_export_default_days()
+    rows = fetch_waitlist_rows(
+        phone_number_id=phone_number_id,
+        days=period,
+        include_all_statuses=bool(include_all),
+    )
+    csv_body = waitlist_rows_to_csv(rows)
+    filename = f"waitlist_{phone_number_id}_{period}d.csv"
+    return Response(
+        content=csv_body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 def _legacy_tenant_context() -> TenantContext | None:
@@ -428,7 +478,12 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             wa_id,
         )
 
+        previous_flow_path = session.flow_path
         flow_path = resolve_flow_path(session, user_text, history)
+        flow_just_switched = (
+            previous_flow_path != flow_path
+            and flow_path in ("compra", "alquiler")
+        )
         await asyncio.to_thread(
             save_session,
             ctx.phone_number_id,
@@ -474,13 +529,14 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
 
         answer = await chat_completion(model_messages)
 
-        clean_answer, raw_alerts = parse_flow_alerts(answer)
+        clean_answer, raw_alerts, raw_waitlist_tag = parse_flow_alerts(answer)
         alerts, interest_classification = await resolve_flow_alerts(
             raw_alerts,
             history=history,
             current_user_text=user_text,
             flow_path=flow_path,
             ctx=ctx,
+            flow_just_switched=flow_just_switched,
         )
         property_ref = extract_property_ref(
             "",
@@ -498,6 +554,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             alerts,
             property_ref=property_ref,
             flow_path=flow_path,
+            current_user_text=user_text,
         )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
 
@@ -525,6 +582,16 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             history=history,
             current_user_text=user_text,
             classification=interest_classification,
+        )
+
+        await process_waitlist_registration(
+            has_waitlist_tag=raw_waitlist_tag,
+            flow_path=flow_path,
+            ctx=ctx,
+            contact_name=contact_name or None,
+            wa_id=wa_id,
+            history=history,
+            current_user_text=user_text,
         )
 
         try:

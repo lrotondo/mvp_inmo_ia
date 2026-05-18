@@ -21,7 +21,7 @@ from app.lead_context import (
     format_user_messages_plain,
     lead_type_from_flow_path,
     qualifies_for_lead_notification,
-    user_signals_real_interest,
+    user_signals_real_interest_current_message,
     user_signals_real_interest_rent,
 )
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
@@ -249,6 +249,7 @@ def _apply_lead_qualification_gate(
     flow_path: str,
     catalog_csv_path: str | None,
     catalog_rent_csv_path: str | None,
+    flow_just_switched: bool = False,
 ) -> LeadClassification | None:
     if classification is None or not classification.is_real_interest:
         return classification
@@ -258,6 +259,7 @@ def _apply_lead_qualification_gate(
         flow_path=flow_path,
         catalog_sale_path=catalog_csv_path,
         catalog_rent_path=catalog_rent_csv_path,
+        flow_just_switched=flow_just_switched,
     ):
         return classification
     logger.info(
@@ -278,12 +280,15 @@ async def evaluate_lead_interest(
     flow_path: str,
     catalog_csv_path: str | None,
     catalog_rent_csv_path: str | None,
+    flow_just_switched: bool = False,
 ) -> LeadClassification | None:
     """Clasifica interés real (misma barra para alertas de flujo y leads)."""
-    user_conversation = format_conversation_for_classifier(history, current_user_text)
+    branch = (flow_path or "compra").strip().lower()
+    user_conversation = format_conversation_for_classifier(
+        history, current_user_text, flow_path=branch
+    )
     conversation_summary = user_conversation[:1200]
 
-    branch = (flow_path or "compra").strip().lower()
     _count, catalog_excerpt, _used = get_catalog_for_flow(
         branch,
         catalog_csv_path,
@@ -299,6 +304,7 @@ async def evaluate_lead_interest(
         flow_path=flow_path,
         catalog_csv_path=catalog_csv_path,
         catalog_rent_csv_path=catalog_rent_csv_path,
+        flow_just_switched=flow_just_switched,
     )
     if classification is not None and classification.is_real_interest:
         return classification
@@ -306,7 +312,7 @@ async def evaluate_lead_interest(
     has_signals = (
         user_signals_real_interest_rent(history, current_user_text)
         if branch == "alquiler"
-        else user_signals_real_interest(history, current_user_text)
+        else user_signals_real_interest_current_message(current_user_text)
     )
     if not has_signals:
         return classification
@@ -317,6 +323,7 @@ async def evaluate_lead_interest(
         flow_path=flow_path,
         catalog_sale_path=catalog_csv_path,
         catalog_rent_path=catalog_rent_csv_path,
+        flow_just_switched=flow_just_switched,
     ):
         return classification
 
@@ -459,6 +466,7 @@ async def try_register_flow_alert(
     conversation_summary: str,
     capture_summary: str | None,
     access_token: str,
+    notify_on_update: bool = False,
 ) -> None:
     if not _lead_detection_enabled():
         return
@@ -480,7 +488,7 @@ async def try_register_flow_alert(
         conversation_at=now,
     )
 
-    if not is_new:
+    if not is_new and not notify_on_update:
         return
 
     if not _lead_whatsapp_notify_enabled():
@@ -494,6 +502,10 @@ async def try_register_flow_alert(
     if not token:
         return
 
+    summary = interest_summary
+    if not is_new and notify_on_update:
+        summary = f"[Actualización de interés] {interest_summary}"
+
     try:
         await _notify_agent_whatsapp(
             lead_type=lead_type,
@@ -503,7 +515,7 @@ async def try_register_flow_alert(
             contact_name=contact_name,
             wa_id=wa_id,
             property_ref=property_ref,
-            interest_summary=interest_summary,
+            interest_summary=summary,
             conversation_summary=conversation_summary,
             capture_summary=capture_summary,
         )

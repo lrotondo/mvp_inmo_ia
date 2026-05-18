@@ -85,3 +85,37 @@ class ClientLead(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class ClientWaitlist(Base):
+    __tablename__ = "client_waitlist"
+    __table_args__ = (
+        UniqueConstraint(
+            "phone_number_id",
+            "wa_id",
+            "seek_type",
+            "status",
+            name="uq_client_waitlist_active",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    phone_number_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    wa_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    contact_name = mapped_column(String(255), nullable=True)
+    seek_type = mapped_column(String(32), nullable=False)
+    status = mapped_column(String(32), nullable=False, default="active")
+    requirements_json = mapped_column(Text, nullable=False)
+    requirements_summary = mapped_column(Text, nullable=False)
+    conversation_summary = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

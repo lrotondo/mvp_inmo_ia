@@ -27,6 +27,28 @@ NUNCA uses la bandera cuando vos mostrás opciones por primera vez, respondés "
 o el cliente solo pidió ver qué hay disponible, eligió favorita o pidió más info sin visita ni asesor.
 """.strip()
 
+WAITLIST_INSTRUCTIONS = """
+### LISTA DE ESPERA (compra y alquiler — aviso cuando aparezca algo nuevo)
+Cuando el cliente ya vio opciones del catálogo de **esta rama** y dice que **ninguna le sirve**
+(o equivalente), seguí estos pasos:
+
+1. **Recompilá** en viñetas lo que busca según lo que dijo en esta rama (zona, presupuesto,
+   ambientes, preferencias). No uses datos de compra si estás en alquiler, ni viceversa.
+2. **Confirmá** con el cliente: "¿Te parece bien este resumen? ¿Querés sumar algo más?"
+3. Si confirma o agrega datos, **ofrecé** avisarlo cuando ingrese una propiedad que encaje.
+4. Solo si el cliente **acepta explícitamente** el aviso (ej. "sí, avisame", "dale"):
+   - Confirmá que quedó registrado en lista de espera (sin inventar plazos).
+   - Agregá al final, en línea sola: `[LISTA_ESPERA]`
+
+PROHIBIDO `[LISTA_ESPERA]` si:
+- solo listás opciones o el cliente hace browse ("qué opciones tenés");
+- el cliente no aceptó el aviso futuro;
+- no hubo paso de resumen + confirmación antes;
+- estás en captación o triage.
+
+En alquiler: no menciones caución ni garantías en el resumen.
+""".strip()
+
 PROPERTY_LINK_INSTRUCTIONS = """
 ### ENLACES DE FOTOS (WhatsApp — compra y alquiler)
 Cada propiedad que muestres debe incluir un enlace clicable a fotos o tour. **No** pegues la URL visible.
@@ -90,6 +112,14 @@ Estado actual de la conversación: {flow_path_label}
 - Activá [ALERTA_VENTA] o [ALERTA_ALQUILER] solo cuando el cliente haya pedido visita, contacto humano
   o interés concreto en una propiedad; nunca solo porque estás calificando perfil.
 - No asumas ciudad ni zona (ej. "CABA") si el cliente no la nombró.
+
+### CAMBIO DE RAMA (compra ↔ alquiler)
+- Si el cliente pasa de alquiler a compra (o viceversa), **no** arrastres opciones favoritas,
+  IDs ni direcciones de la rama anterior.
+- **Prohibido** decir que registraste interés o que un asesor lo va a contactar hasta que el cliente
+  elija o pida visita **en la rama actual**.
+- Si pide *"qué opciones para comprar/alquilar"*: solo listá del catálogo correspondiente + una pregunta
+  de opinión; **sin** bandera de alerta ni cierre de derivación.
 """.strip()
 
 BRANCH_TRIAGE = """
@@ -107,9 +137,12 @@ Objetivo: descubrir qué busca y su viabilidad financiera.
    aprobado o si necesita vender otra propiedad primero.
 3. Acción: buscá SOLO en el catálogo de VENTA provisto abajo. NUNCA cites propiedades de alquiler.
    Mostrá hasta 3 opciones aplicando **ENLACES DE FOTOS** (`[Ver fotos]` o `[Tour 360°]` en cada opción).
-4. Trigger: solo si el cliente pide visitar, hablar con un asesor, o consulta puntual sobre una
-   propiedad concreta del catálogo (ID/dirección), derivá al asesor humano (sin agendar) e incluí
-   al final [ALERTA_VENTA] (nunca [ALERTA_ALQUILER]). No uses la bandera en indagación inicial.
+4. Tras listar opciones, cerrá con **una** pregunta abierta (ej. "¿Cuál te interesa más?").
+   **No** digas que un asesor ya lo va a contactar ni que registraste interés al solo listar.
+5. Trigger: solo si el cliente pide visitar, hablar con un asesor, o elige una propiedad concreta
+   de **venta** (ID/dirección en su mensaje), derivá al asesor humano (sin agendar) e incluí
+   al final [ALERTA_VENTA] (nunca [ALERTA_ALQUILER]). No uses la bandera al listar ni al cambiar desde alquiler.
+6. Si tras ver opciones de **venta** ninguna le sirve: seguí **LISTA DE ESPERA** (resumen, confirmación, oferta de aviso).
 """.strip()
 
 BRANCH_ALQUILER = """
@@ -150,6 +183,7 @@ Objetivo: mostrar opciones del catálogo de forma ágil; conversar antes de deri
   **hablar con un asesor/persona humana**, o **que lo contacten** para coordinar.
 - **Nunca** [ALERTA_ALQUILER] al listar opciones, al responder "decime qué tenés", ni por interés leve o favorita.
 - Cuando corresponda la alerta: mencioná brevemente que un asesor lo contactará (sin agendar fechas) e incluí la bandera al final.
+- Si tras ver opciones de **alquiler** ninguna le sirve: seguí **LISTA DE ESPERA** (resumen, confirmación, oferta de aviso).
 """.strip()
 
 VISIT_HANDOFF_TEMPLATE = (
@@ -222,6 +256,7 @@ def build_flow_system_prompt(
 
     parts = [base, branch, ALERTA_INSTRUCTIONS]
     if path in ("compra", "alquiler"):
+        parts.append(WAITLIST_INSTRUCTIONS)
         parts.append(PROPERTY_LINK_INSTRUCTIONS)
 
     if path == "captacion":

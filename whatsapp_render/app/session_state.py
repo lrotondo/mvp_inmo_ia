@@ -38,12 +38,12 @@ _CAPTACION_RE = re.compile(
     re.I,
 )
 _SWITCH_COMPRA_RE = re.compile(
-    r"\b(busco\s+comprar|quiero\s+comprar|opciones\s+de\s+compra)\b",
+    r"\b(busco\s+comprar|quiero\s+comprar|opciones\s+de\s+compra|opciones\s+para\s+comprar)\b",
     re.I,
 )
 _SWITCH_ALQUILER_RE = re.compile(
     r"\b("
-    r"busco\s+alquilar|quiero\s+alquilar|opciones\s+de\s+alquiler|"
+    r"busco\s+alquilar|quiero\s+alquilar|opciones\s+de\s+alquiler|opciones\s+para\s+alquilar|"
     r"necesito\s+alquilar|busco\s+alquiler|departamento\s+en\s+alquiler|"
     r"casa\s+en\s+alquiler|depto\s+en\s+alquiler"
     r")\b",

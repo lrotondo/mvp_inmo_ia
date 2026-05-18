@@ -39,10 +39,38 @@ _BROWSE_ONLY_RE = re.compile(
     r"\b("
     r"dec[ií]me\s+qu[eé]\s+ten[eé]s|qu[eé]\s+ten[eé]s|qu[eé]\s+hay|"
     r"ten[eé]s\s+algo|alguna\s+opci[oó]n|ver\s+opci[oó]nes|"
-    r"mostr[aá](?:me)?\s+opci[oó]nes|qu[eé]\s+disponible|mostr[aá]me"
+    r"mostr[aá](?:me)?\s+opci[oó]nes|qu[eé]\s+disponible|mostr[aá]me|"
+    r"qu[eé]\s+opciones|opciones\s+para\s+comprar|opciones\s+de\s+compra|"
+    r"opciones\s+para\s+alquilar|opciones\s+de\s+alquiler|qu[eé]\s+casas|"
+    r"qu[eé]\s+departamentos|qu[eé]\s+propiedades"
     r")\b",
     re.I,
 )
+
+_FLOW_SWITCH_COMPRA_RE = re.compile(
+    r"\b("
+    r"busco\s+comprar|quiero\s+comprar|opciones\s+de\s+compra|"
+    r"opciones\s+para\s+comprar|qu[eé]\s+opciones.*compr"
+    r")\b",
+    re.I,
+)
+_FLOW_SWITCH_ALQUILER_RE = re.compile(
+    r"\b("
+    r"busco\s+alquilar|quiero\s+alquilar|opciones\s+de\s+alquiler|"
+    r"opciones\s+para\s+alquilar|necesito\s+alquilar|qu[eé]\s+opciones.*alquil"
+    r")\b",
+    re.I,
+)
+_FLOW_SWITCH_CAPTACION_RE = re.compile(
+    r"\b(quiero\s+vender|tengo\s+.*\s+para\s+vender|vender\s+mi)\b",
+    re.I,
+)
+
+_FLOW_SWITCH_BY_PATH: dict[str, re.Pattern[str]] = {
+    "compra": _FLOW_SWITCH_COMPRA_RE,
+    "alquiler": _FLOW_SWITCH_ALQUILER_RE,
+    "captacion": _FLOW_SWITCH_CAPTACION_RE,
+}
 
 _PROPERTY_CHOICE_RE = re.compile(
     r"\b("
@@ -101,6 +129,58 @@ def format_user_messages_plain(
     return "\n".join(parts)
 
 
+def _user_turn_texts(history: list[HistoryTurn]) -> list[str]:
+    return [t.content.strip() for t in history if t.role == "user" and t.content.strip()]
+
+
+def user_messages_for_flow(
+    history: list[HistoryTurn],
+    current_user_text: str,
+    flow_path: str,
+) -> str:
+    """
+    Mensajes del cliente desde el último cambio explícito a esta rama (compra/alquiler).
+    Evita que elecciones de alquiler contaminen gates de compra.
+    """
+    path = (flow_path or "").strip().lower()
+    turns = _user_turn_texts(history)
+    switch_re = _FLOW_SWITCH_BY_PATH.get(path)
+
+    start = 0
+    if switch_re is not None:
+        for idx, msg in enumerate(turns):
+            if switch_re.search(msg):
+                start = idx
+
+    scoped = turns[start:]
+    current = current_user_text.strip()
+    if current:
+        if not scoped or scoped[-1] != current:
+            scoped.append(current)
+    elif scoped:
+        pass
+    elif current:
+        scoped = [current]
+
+    if not scoped and current:
+        return current
+    return "\n".join(scoped)
+
+
+def should_suppress_visit_alerts(
+    current_user_text: str,
+    *,
+    flow_just_switched: bool = False,
+) -> bool:
+    """Browse o primer mensaje tras cambiar de rama: no alertas de visita."""
+    current = current_user_text.strip()
+    if not current:
+        return False
+    if current_message_is_browse_only(current):
+        return True
+    return flow_just_switched and current_message_is_browse_only(current)
+
+
 def user_declined_zone_preference(user_messages_text: str) -> bool:
     return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
 
@@ -116,7 +196,9 @@ def extract_property_ref(
     user_only: bool = False,
 ) -> str:
     if user_only and history is not None:
-        blob = format_user_messages_plain(history, current_user_text).lower()
+        blob = user_messages_for_flow(
+            history, current_user_text, flow_path
+        ).lower()
     else:
         blob = conversation_text.lower()
 
@@ -180,8 +262,8 @@ def user_signals_real_interest_rent(
     history: list[HistoryTurn],
     current_user_text: str,
 ) -> bool:
-    """Alquiler: solo visita explícita o pedido de asesor humano."""
-    user_blob = format_user_messages_plain(history, current_user_text)
+    """Alquiler: solo visita explícita o pedido de asesor humano (rama acotada)."""
+    user_blob = user_messages_for_flow(history, current_user_text, "alquiler")
     if not user_blob.strip():
         return False
     if conversation_wants_visit_rent(user_blob):
@@ -191,17 +273,31 @@ def user_signals_real_interest_rent(
     return False
 
 
+def user_signals_real_interest_current_message(current_user_text: str) -> bool:
+    """Señales de interés solo en el mensaje actual (compra: evita historial de otra rama)."""
+    current = current_user_text.strip()
+    if not current:
+        return False
+    if conversation_wants_visit(current):
+        return True
+    if conversation_requests_human(current):
+        return True
+    if _PROPERTY_CHOICE_RE.search(current):
+        return True
+    return False
+
+
 def format_conversation_for_classifier(
     history: list[HistoryTurn],
     current_user_text: str = "",
+    *,
+    flow_path: str = "compra",
 ) -> str:
-    """Solo mensajes del cliente — el asesor bot no cuenta como intención del usuario."""
-    lines: list[str] = []
-    for turn in history:
-        if turn.role == "user" and turn.content.strip():
-            lines.append(f"Cliente: {turn.content.strip()}")
-    if current_user_text.strip():
-        lines.append(f"Cliente: {current_user_text.strip()}")
+    """Solo mensajes del cliente en la rama actual — sin contaminar con otra intención."""
+    scoped = user_messages_for_flow(history, current_user_text, flow_path)
+    if not scoped.strip():
+        return ""
+    lines = [f"Cliente: {line}" for line in scoped.split("\n") if line.strip()]
     return "\n".join(lines)
 
 
@@ -219,13 +315,20 @@ def qualifies_for_lead_notification(
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
+    flow_just_switched: bool = False,
 ) -> bool:
     """
     Puerta determinista tras el clasificador LLM.
     Evita leads por 'decime qué tenés', datos inferidos del catálogo o mensajes del bot.
     """
-    plain = format_user_messages_plain(history, current_user_text)
-    if not plain.strip():
+    current = current_user_text.strip()
+    if should_suppress_visit_alerts(
+        current_user_text, flow_just_switched=flow_just_switched
+    ):
+        return False
+
+    scoped = user_messages_for_flow(history, current_user_text, flow_path)
+    if not scoped.strip():
         return False
 
     path = (flow_path or "").strip().lower()
@@ -233,14 +336,8 @@ def qualifies_for_lead_notification(
     if path == "alquiler":
         return user_signals_real_interest_rent(history, current_user_text)
 
-    if user_signals_real_interest(history, current_user_text):
+    if user_signals_real_interest_current_message(current_user_text):
         return True
-
-    current = current_user_text.strip()
-    if current and current_message_is_browse_only(current):
-        if not _PROPERTY_CHOICE_RE.search(current):
-            if not conversation_wants_visit(current) and not conversation_requests_human(current):
-                return False
 
     prop = extract_property_ref(
         "",
@@ -254,14 +351,11 @@ def qualifies_for_lead_notification(
     if not prop:
         return False
 
-    if _PROPERTY_CHOICE_RE.search(plain):
-        return True
-    if conversation_wants_visit(plain) or conversation_requests_human(plain):
+    if _PROPERTY_CHOICE_RE.search(current):
         return True
 
-    # ID o dirección mencionada explícitamente por el cliente (no solo barrio suelto)
     prop_lower = prop.lower()
-    if prop_lower in plain.lower():
+    if prop_lower in current.lower():
         if len(prop) >= 10 or any(ch.isdigit() for ch in prop):
             return True
     return False

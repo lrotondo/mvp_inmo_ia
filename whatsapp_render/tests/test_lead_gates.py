@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.conversation import HistoryTurn
-from app.flow_triggers import apply_visit_handoff, filter_alerts_by_real_interest
+from app.flow_triggers import (
+    apply_visit_handoff,
+    filter_alerts_by_real_interest,
+    filter_alerts_suppressed_for_browse,
+)
 from app.lead_context import (
     current_message_is_browse_only,
     extract_property_ref,
@@ -151,6 +155,66 @@ def test_apply_visit_handoff_replaces_for_compra() -> None:
         ["ALERTA_VENTA"],
         property_ref="ID 4",
         flow_path="compra",
+        current_user_text="quiero visitar la opción 2",
     )
     assert result != llm_text
     assert "Registré tu interés" in result
+
+
+def test_apply_visit_handoff_skips_compra_without_current_signal() -> None:
+    llm_text = "Te muestro opciones de compra."
+    result = apply_visit_handoff(
+        llm_text,
+        ["ALERTA_VENTA"],
+        property_ref="ID 10",
+        flow_path="compra",
+        current_user_text="que opciones para comprar?",
+    )
+    assert result == llm_text
+
+
+def test_cross_flow_alquiler_choice_then_compra_browse_no_qualify() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+        HistoryTurn(role="user", content="me gusta la opción 3"),
+        HistoryTurn(role="user", content="que opciones para comprar?"),
+    ]
+    assert current_message_is_browse_only("que opciones para comprar?")
+    assert not qualifies_for_lead_notification(
+        history,
+        "que opciones para comprar?",
+        flow_path="compra",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+        flow_just_switched=True,
+    )
+
+
+def test_cross_flow_compra_visit_after_switch_qualifies() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="me gusta la opción 3"),
+        HistoryTurn(role="user", content="que opciones para comprar?"),
+        HistoryTurn(role="user", content="quiero visitar la opción 2"),
+    ]
+    assert qualifies_for_lead_notification(
+        history,
+        "quiero visitar la opción 2",
+        flow_path="compra",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
+
+
+def test_filter_suppresses_venta_alert_on_compra_browse_switch() -> None:
+    classification = LeadClassification(
+        is_real_interest=True,
+        property_ref="ID 10",
+        interest_summary="Interesado",
+        conversation_summary="",
+    )
+    filtered = filter_alerts_suppressed_for_browse(
+        filter_alerts_by_real_interest(["ALERTA_VENTA"], classification),
+        "que opciones para comprar?",
+        flow_just_switched=True,
+    )
+    assert filtered == []
