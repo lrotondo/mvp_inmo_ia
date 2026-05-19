@@ -19,7 +19,7 @@ from app.lead_context import (
 )
 from app.leads import LeadClassification, LeadType, evaluate_lead_interest, try_register_flow_alert
 from app.waitlist import register_waitlist_entry
-from app.waitlist_context import qualifies_for_waitlist_registration
+from app.waitlist_context import should_register_waitlist
 from app.prompts.flow_master import CLOSING_CAPTACION_TEXT, format_visit_handoff
 from app.session_state import (
     SessionState,
@@ -67,13 +67,24 @@ def parse_flow_alerts(text: str) -> tuple[str, list[AlertTag], bool]:
 def filter_waitlist_tag(
     has_waitlist_tag: bool,
     current_user_text: str,
+    *,
+    history: list[HistoryTurn] | None = None,
 ) -> bool:
-    if not has_waitlist_tag:
-        return False
-    if qualifies_for_waitlist_registration(current_user_text):
-        return True
-    logger.info("LISTA_ESPERA descartada (sin aceptacion explicita del cliente)")
-    return False
+    ok = should_register_waitlist(
+        has_waitlist_tag,
+        current_user_text,
+        history=history,
+    )
+    if not ok and has_waitlist_tag:
+        logger.info("LISTA_ESPERA descartada (sin aceptacion del cliente)")
+    elif not ok and not has_waitlist_tag:
+        from app.waitlist_context import qualifies_for_waitlist_registration
+
+        if qualifies_for_waitlist_registration(current_user_text):
+            logger.info(
+                "Waitlist sin tag (LLM omitio LISTA_ESPERA; sin prompt previo de confirmacion)"
+            )
+    return ok
 
 
 def filter_alerts_by_real_interest(
@@ -391,7 +402,9 @@ async def process_waitlist_registration(
     path = (flow_path or "").strip().lower()
     if path not in ("compra", "alquiler"):
         return
-    if not filter_waitlist_tag(has_waitlist_tag, current_user_text):
+    if not filter_waitlist_tag(
+        has_waitlist_tag, current_user_text, history=history
+    ):
         return
     try:
         is_new = await register_waitlist_entry(

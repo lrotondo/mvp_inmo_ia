@@ -6,11 +6,14 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.conversation import HistoryTurn
 from app.flow_triggers import filter_waitlist_tag, parse_flow_alerts
 from app.main import app
 from app.waitlist import WaitlistRequirements, _parse_classifier_json, waitlist_rows_to_csv
 from app.waitlist_context import (
+    bot_recently_prompted_waitlist_confirm,
     qualifies_for_waitlist_registration,
+    should_register_waitlist,
     user_accepts_waitlist,
     user_declines_waitlist,
     user_signals_no_fit,
@@ -26,12 +29,15 @@ def test_user_signals_no_fit() -> None:
 def test_user_accepts_waitlist() -> None:
     assert user_accepts_waitlist("sí, avisame cuando haya algo")
     assert user_accepts_waitlist("dale, registrame")
+    assert user_accepts_waitlist("está perfecto, muchas gracias")
+    assert user_accepts_waitlist("confirmo, así está bien")
     assert not user_accepts_waitlist("no gracias")
     assert not user_declines_waitlist("sí dale")
 
 
 def test_qualifies_requires_explicit_accept() -> None:
     assert qualifies_for_waitlist_registration("sí, quiero que me avisen")
+    assert qualifies_for_waitlist_registration("está perfecto, muchas gracias")
     assert not qualifies_for_waitlist_registration("ninguna me sirve")
 
 
@@ -45,8 +51,48 @@ def test_parse_flow_alerts_strips_waitlist_tag() -> None:
 
 def test_filter_waitlist_tag_requires_accept() -> None:
     assert filter_waitlist_tag(True, "sí, avisame")
+    assert filter_waitlist_tag(True, "está perfecto, muchas gracias")
     assert not filter_waitlist_tag(True, "ninguna me convence")
     assert not filter_waitlist_tag(False, "sí, avisame")
+
+
+def test_filter_waitlist_tag_backup_without_tag() -> None:
+    history = [
+        HistoryTurn(
+            role="assistant",
+            content="¿Confirmás que está bien así? Te sumo a la lista de espera.",
+        ),
+    ]
+    assert filter_waitlist_tag(
+        False,
+        "está perfecto, muchas gracias",
+        history=history,
+    )
+    assert not filter_waitlist_tag(
+        False,
+        "está perfecto, muchas gracias",
+        history=[],
+    )
+
+
+def test_should_register_waitlist_tag_without_strict_accept() -> None:
+    assert should_register_waitlist(True, "ok, gracias")
+    assert should_register_waitlist(
+        True,
+        "está perfecto, muchas gracias",
+    )
+    assert not should_register_waitlist(True, "no gracias")
+
+
+def test_bot_recently_prompted_waitlist_confirm() -> None:
+    history = [
+        HistoryTurn(role="user", content="ninguna me convence"),
+        HistoryTurn(
+            role="assistant",
+            content="¿Confirmás que está bien este resumen para la lista de espera?",
+        ),
+    ]
+    assert bot_recently_prompted_waitlist_confirm(history)
 
 
 def test_parse_classifier_json() -> None:

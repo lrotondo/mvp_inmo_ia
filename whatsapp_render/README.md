@@ -143,9 +143,21 @@ Probar:
 
 ### Catálogo con Google Sheets (recomendado en producción)
 
-1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados exactos:
+1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados (orden flexible; aliases aceptados):
 
-   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Link_Fotos | Tour_360`
+   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Disponible | Link_Fotos | Tour_360 | url_link_fotos | url_link_video`
+
+   | Columna | Obligatoria | Uso |
+   |---------|-------------|-----|
+   | `ID` | sí | Identificador único de la fila |
+   | `Direccion`, `Barrio`, `Precio`, `Ambientes`, `Caracteristicas` | sí | Datos mostrados al cliente |
+   | `Disponible` | sí para publicar | Solo filas con `si`, `sí`, `1`, `true`, etc. aparecen en el bot. **Vacío u otro valor = oculta** |
+   | `Link_Fotos` | recomendada | Miniatura / link en listados (`[📸 Ver fotos]`) |
+   | `Tour_360` | opcional | Tour en listados (`[🔄 Tour 360°]`) si está cargado |
+   | `url_link_fotos` | opcional | Galería externa cuando piden fotos (`[📸 Ver galería de fotos]`) |
+   | `url_link_video` | opcional | Video externo cuando piden video (`[🎥 Ver video]`) |
+
+   **Migración:** si agregás la columna `Disponible` a una planilla existente, marcá `si` en **cada** fila que quieras que el agente ofrezca. Sin `disponible=si` la propiedad no entra al catálogo del prompt ni a búsqueda por ID.
 
 2. En cada planilla: **Compartir** → acceso general **Cualquiera con el enlace** → rol **Lector** (así el backend puede leer vía export CSV sin cuenta de servicio).
 
@@ -197,16 +209,19 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ## Catálogo y relevancia
 
-- **Todas** las propiedades (CSV o Google Sheet) van en el **system prompt** en formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, **características** y **link de fotos** (`Link_Fotos`), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
+- Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
+- El bloque del **system prompt** usa formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, características y URLs de media (`Link_Fotos`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
-- El LLM elige cuáles mencionar según la consulta (sin pre-filtro en Python).
+- El LLM elige cuáles mencionar según la consulta (entre las filas ya filtradas por disponibilidad).
 
-### Enlaces de fotos (WhatsApp)
+### Enlaces de fotos y video (WhatsApp)
 
-- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) instruye al bot a incluir en **cada** propiedad mostrada un enlace markdown: `[Ver fotos](URL)` o `[Tour 360°](URL)` (prioriza `Tour_360` del catálogo si existe).
-- La URL **no** se muestra en texto plano; el cliente ve un enlace clicable.
-- En listados de hasta 3 opciones, cada fila lleva su propio enlace debajo de la descripción.
-- Usá URLs públicas accesibles en `Link_Fotos` / `Tour_360` del CSV o Google Sheet.
+- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji: `[📸 Ver fotos]`, `[🔄 Tour 360°]`, `[📸 Ver galería de fotos]`, `[🎥 Ver video]`.
+- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `Link_Fotos`.
+- Si el cliente **pide fotos**: `url_link_fotos` (fallback `Link_Fotos`).
+- Si pide **video**: `url_link_video`.
+- La URL **no** se muestra en texto plano; el cliente ve un botón clicable con emoji.
+- Usá URLs públicas accesibles en el CSV o Google Sheet.
 
 ## Historial de conversación
 

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
+
+_AVAILABLE_VALUES = frozenset(
+    {"si", "sí", "s", "yes", "y", "1", "true", "verdadero", "x", "disponible"}
+)
 
 from app.catalog_sources import (
     CatalogRef,
@@ -111,31 +118,62 @@ def resolve_rent_catalog_path(
         return str(candidate)
 
 
+def is_property_available(row: dict[str, Any]) -> bool:
+    raw = str(row.get("Disponible", "")).strip().lower()
+    return raw in _AVAILABLE_VALUES
+
+
 def load_properties_for_catalog_path(catalog_csv_path: str | None) -> List[Dict[str, Any]]:
     ref = _ref_for_path(catalog_csv_path)
-    return list(_load_rows(ref))
+    all_rows = list(_load_rows(ref))
+    available = [row for row in all_rows if is_property_available(row)]
+    if all_rows and len(available) < len(all_rows):
+        logger.debug(
+            "catalog_availability path=%r total=%s available=%s",
+            catalog_csv_path,
+            len(all_rows),
+            len(available),
+        )
+    return available
 
 
 def load_properties() -> List[Dict[str, Any]]:
     return load_properties_for_catalog_path(None)
 
 
+def _media_suffix_parts(row: dict[str, Any]) -> str:
+    parts: list[str] = []
+    link_fotos = str(row.get("Link_Fotos", "")).strip()
+    if link_fotos:
+        parts.append(f"Fotos: {link_fotos}")
+    galeria = str(row.get("url_link_fotos", "")).strip()
+    if galeria:
+        parts.append(f"Galeria: {galeria}")
+    video = str(row.get("url_link_video", "")).strip()
+    if video:
+        parts.append(f"Video: {video}")
+    tour = str(row.get("Tour_360") or row.get("Tour_360_URL") or "").strip()
+    if tour:
+        parts.append(f"Tour_360: {tour}")
+    if not parts:
+        return ""
+    return " | " + " | ".join(parts)
+
+
 def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
     lines = []
     for row in hits:
-        tour = row.get("Tour_360") or row.get("Tour_360_URL") or ""
-        tour_part = f" | Tour_360: {tour}" if str(tour).strip() else ""
+        media_part = _media_suffix_parts(row)
         lines.append(
             "{ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
-            "Caracteristicas: {Caracteristicas} | Fotos: {Link_Fotos}{tour_part}".format(
+            "Caracteristicas: {Caracteristicas}{media_part}".format(
                 ID=row.get("ID", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
                 Precio=row.get("Precio", ""),
                 Ambientes=row.get("Ambientes", ""),
                 Caracteristicas=row.get("Caracteristicas", ""),
-                Link_Fotos=row.get("Link_Fotos", ""),
-                tour_part=tour_part,
+                media_part=media_part,
             )
         )
     return "\n".join(lines)
@@ -162,8 +200,7 @@ def format_catalog(hits: List[Dict[str, Any]]) -> str:
 def get_cached_compact_catalog(
     catalog_csv_path: str | None,
 ) -> tuple[int, str]:
-    ref = _ref_for_path(catalog_csv_path)
-    rows = list(_load_rows(ref))
+    rows = load_properties_for_catalog_path(catalog_csv_path)
     text = format_catalog_compact(rows)
     if not text:
         return 0, "(catálogo vacío o no disponible.)"
@@ -171,9 +208,8 @@ def get_cached_compact_catalog(
 
 
 def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
-    ref = _ref_for_path(catalog_csv_path)
     terms: set[str] = set()
-    for row in _load_rows(ref):
+    for row in load_properties_for_catalog_path(catalog_csv_path):
         for field in ("ID", "Direccion", "Barrio"):
             raw = str(row.get(field, "")).lower().strip()
             if not raw:

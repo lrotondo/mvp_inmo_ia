@@ -23,7 +23,7 @@ _SPREADSHEET_URL_RE = re.compile(
 _SPREADSHEET_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{20,}$")
 
 # Fila 1 de la planilla / CSV: ID, Direccion, Barrio, Precio, Ambientes,
-# Caracteristicas, Link_Fotos, Tour_360
+# Caracteristicas, Disponible, Link_Fotos, Tour_360, url_link_fotos, url_link_video
 
 _HEADER_ALIASES: dict[str, str] = {
     "id": "ID",
@@ -34,12 +34,20 @@ _HEADER_ALIASES: dict[str, str] = {
     "ambientes": "Ambientes",
     "caracteristicas": "Caracteristicas",
     "características": "Caracteristicas",
+    "disponible": "Disponible",
     "link_fotos": "Link_Fotos",
     "link fotos": "Link_Fotos",
     "fotos": "Link_Fotos",
     "tour_360": "Tour_360",
     "tour 360": "Tour_360",
     "tour_360_url": "Tour_360",
+    "url_link_fotos": "url_link_fotos",
+    "link fotos externo": "url_link_fotos",
+    "galeria": "url_link_fotos",
+    "galería": "url_link_fotos",
+    "url_link_video": "url_link_video",
+    "link video": "url_link_video",
+    "video": "url_link_video",
 }
 
 
