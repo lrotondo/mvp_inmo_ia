@@ -145,17 +145,19 @@ Probar:
 
 1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados (orden flexible; aliases aceptados):
 
-   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Disponible | Link_Fotos | Tour_360 | url_link_fotos | url_link_video`
+   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Disponible | foto_principal | Tour_360 | url_link_fotos | url_link_video`
 
    | Columna | Obligatoria | Uso |
    |---------|-------------|-----|
    | `ID` | sí | Identificador único de la fila |
    | `Direccion`, `Barrio`, `Precio`, `Ambientes`, `Caracteristicas` | sí | Datos mostrados al cliente |
    | `Disponible` | sí para publicar | Solo filas con `si`, `sí`, `1`, `true`, etc. aparecen en el bot. **Vacío u otro valor = oculta** |
-   | `Link_Fotos` | recomendada | Miniatura / link en listados (`[📸 Ver fotos]`) |
+   | `foto_principal` | recomendada | Foto del resumen en listados (`[📸 Ver fotos]`) |
    | `Tour_360` | opcional | Tour en listados (`[🔄 Tour 360°]`) si está cargado |
-   | `url_link_fotos` | opcional | Galería externa cuando piden fotos (`[📸 Ver galería de fotos]`) |
+   | `url_link_fotos` | opcional | Carrusel / galería en detalle o si piden fotos (`[📸 Ver galería de fotos]`) |
    | `url_link_video` | opcional | Video externo cuando piden video (`[🎥 Ver video]`) |
+
+   **Compatibilidad:** el encabezado antiguo `Link_Fotos` se normaliza a `foto_principal`.
 
    **Migración:** si agregás la columna `Disponible` a una planilla existente, marcá `si` en **cada** fila que quieras que el agente ofrezca. Sin `disponible=si` la propiedad no entra al catálogo del prompt ni a búsqueda por ID.
 
@@ -210,17 +212,16 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Catálogo y relevancia
 
 - Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
-- El bloque del **system prompt** usa formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, características y URLs de media (`Link_Fotos`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
+- El bloque del **system prompt** usa formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, características y URLs de media (`foto_principal`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
 - El LLM elige cuáles mencionar según la consulta (entre las filas ya filtradas por disponibilidad).
 
 ### Enlaces de fotos y video (WhatsApp)
 
 - El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji: `[📸 Ver fotos]`, `[🔄 Tour 360°]`, `[📸 Ver galería de fotos]`, `[🎥 Ver video]`.
-- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `Link_Fotos` (miniatura).
-- En **detalle / más info** de una propiedad o si **pide fotos**: `url_link_fotos` (`Galeria` en el catálogo); fallback `Link_Fotos`.
+- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `foto_principal`.
+- En **detalle / más info** o si **pide fotos**: `url_link_fotos` (carrusel); fallback `foto_principal`.
 - **Video** (detalle o pedido explícito): `url_link_video`.
-- Si pide **video**: `url_link_video`.
 - La URL **no** se muestra en texto plano; el cliente ve un botón clicable con emoji.
 - Usá URLs públicas accesibles en el CSV o Google Sheet.
 

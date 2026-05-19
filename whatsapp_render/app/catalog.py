@@ -141,14 +141,24 @@ def load_properties() -> List[Dict[str, Any]]:
     return load_properties_for_catalog_path(None)
 
 
+def primary_photo_url(row: dict[str, Any]) -> str:
+    """Foto del resumen/listado (columna foto_principal; legacy Link_Fotos)."""
+    return str(row.get("foto_principal") or row.get("Link_Fotos") or "").strip()
+
+
+def gallery_photo_url(row: dict[str, Any]) -> str:
+    """Carrusel / galería al pedir detalle (columna url_link_fotos)."""
+    return str(row.get("url_link_fotos") or "").strip()
+
+
 def _media_suffix_parts(row: dict[str, Any]) -> str:
     parts: list[str] = []
-    link_fotos = str(row.get("Link_Fotos", "")).strip()
-    if link_fotos:
-        parts.append(f"Fotos: {link_fotos}")
-    galeria = str(row.get("url_link_fotos", "")).strip()
+    principal = primary_photo_url(row)
+    if principal:
+        parts.append(f"foto_principal: {principal}")
+    galeria = gallery_photo_url(row)
     if galeria:
-        parts.append(f"Galeria: {galeria}")
+        parts.append(f"url_link_fotos: {galeria}")
     video = str(row.get("url_link_video", "")).strip()
     if video:
         parts.append(f"Video: {video}")
@@ -184,14 +194,14 @@ def format_catalog(hits: List[Dict[str, Any]]) -> str:
     for row in hits:
         lines.append(
             "ID {ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
-            "Caracteristicas: {Caracteristicas} | Fotos: {Link_Fotos}".format(
+            "Caracteristicas: {Caracteristicas} | foto_principal: {foto_principal}".format(
                 ID=row.get("ID", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
                 Precio=row.get("Precio", ""),
                 Ambientes=row.get("Ambientes", ""),
                 Caracteristicas=row.get("Caracteristicas", ""),
-                Link_Fotos=row.get("Link_Fotos", ""),
+                foto_principal=primary_photo_url(row),
             )
         )
     return "\n".join(lines)
