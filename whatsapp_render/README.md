@@ -217,8 +217,9 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ### Enlaces de fotos y video (WhatsApp)
 
 - El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji: `[📸 Ver fotos]`, `[🔄 Tour 360°]`, `[📸 Ver galería de fotos]`, `[🎥 Ver video]`.
-- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `Link_Fotos`.
-- Si el cliente **pide fotos**: `url_link_fotos` (fallback `Link_Fotos`).
+- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `Link_Fotos` (miniatura).
+- En **detalle / más info** de una propiedad o si **pide fotos**: `url_link_fotos` (`Galeria` en el catálogo); fallback `Link_Fotos`.
+- **Video** (detalle o pedido explícito): `url_link_video`.
 - Si pide **video**: `url_link_video`.
 - La URL **no** se muestra en texto plano; el cliente ve un botón clicable con emoji.
 - Usá URLs públicas accesibles en el CSV o Google Sheet.
