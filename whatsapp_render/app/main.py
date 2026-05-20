@@ -571,6 +571,11 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             clean_answer,
             catalog_csv_path=catalog_path_used,
             property_ref=property_ref,
+            current_user_text=user_text,
+            flow_path=flow_path,
+            history=history,
+            catalog_sale_path=ctx.catalog_csv_path,
+            catalog_rent_path=ctx.catalog_rent_csv_path,
         )
 
         logger.info(

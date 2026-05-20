@@ -196,6 +196,20 @@ def save_session(
     )
 
 
+_FRESH_START_RE = re.compile(
+    r"\b("
+    r"empecemos\s+de\s+nuevo|empez(?:ar|amos|á)\s+de\s+nuevo|desde\s+cero|"
+    r"reinici(?:ar|emos|á)|volver\s+a\s+empezar|"
+    r"nueva\s+consulta|otra\s+vez\s+desde"
+    r")\b",
+    re.I,
+)
+
+
+def user_wants_fresh_start(text: str) -> bool:
+    return bool(_FRESH_START_RE.search((text or "").strip()))
+
+
 def _detect_flow_from_text(text: str) -> FlowPath | None:
     body = text.strip()
     if not body:
@@ -215,6 +229,10 @@ def resolve_flow_path(
     history: list[HistoryTurn],
 ) -> FlowPath:
     current = session.flow_path
+
+    if user_wants_fresh_start(current_user_text):
+        logger.info("Flow path reinicio: %s -> nuevo", current)
+        return "nuevo"
 
     if _SWITCH_CAPTACION_RE.search(current_user_text):
         return "captacion"

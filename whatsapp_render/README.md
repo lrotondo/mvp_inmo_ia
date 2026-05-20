@@ -200,7 +200,7 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 ## Flujo Espacios360 (3 caminos)
 
 1. **Triage** (`flow_path=nuevo`): saludo y pregunta si compra, alquila o vende su propiedad.
-2. **Compra** (`compra`): catálogo de venta; calificación financiera; bandera `[ALERTA_VENTA]` si hay interés alto.
+2. **Compra** (`compra`): catálogo de venta; perfil (zona, ambientes, presupuesto); sin preguntar financiación antes de listar; bandera `[ALERTA_VENTA]` si hay interés alto.
 3. **Alquiler** (`alquiler`): al entrar a la rama pregunta perfil (ambientes/dormitorios, zona, casa o depto); luego hasta 3 opciones del catálogo; bandera `[ALERTA_ALQUILER]` tras visita + preferencia horaria.
 4. **Captación** (`captacion`): recopila tipo, ubicación y m²/ambientes; cierre fijo y `[ALERTA_CAPTACION_PROPIETARIO]`; **pausa el bot** para ese chat (`bot_paused`).
 
@@ -225,7 +225,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
   2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)
   3. Pregunta de cierre
 - `LISTING_IMAGE_DELIVERY=false` desactiva el envío multi-imagen y vuelve a un solo mensaje de texto.
-- En **detalle / más info**: el bot incluye galería (`url_link_fotos` o `foto_principal`) y, si existe en el catálogo, **video** (`url_link_video`) en el **mismo mensaje**. El backend agrega el link de video si el modelo lo omitió.
+- En **detalle / más info**: el backend arma una ficha con *Características* del catálogo + galería + video (mismo mensaje). En **listados** con `[LISTADO:ids]`, cada imagen lleva caption con características completas.
 - Si el cliente **pide solo fotos o solo video**, seguir las plantillas puntuales del prompt.
 - `foto_principal` debe ser URL **HTTPS pública** directa a JPG/PNG (Meta descarga la imagen). Drive o páginas web no sirven como imagen embebida.
 

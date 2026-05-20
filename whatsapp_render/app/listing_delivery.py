@@ -6,10 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.catalog import (
-    get_properties_by_ids,
-    primary_photo_url,
-)
+from app.catalog import get_properties_by_ids, primary_photo_url
+from app.property_ficha import build_property_ficha
 from app.meta_client import (
     is_public_https_image_url,
     send_whatsapp_image_message,
@@ -61,47 +59,13 @@ def parse_listado_tag(text: str) -> ParsedListado | None:
     )
 
 
-def tour_360_url(row: dict[str, Any]) -> str:
-    return str(row.get("Tour_360") or row.get("Tour_360_URL") or "").strip()
-
-
 def build_listing_caption(row: dict[str, Any], index: int) -> str:
-    """Caption para mensaje imagen: título + datos + tour 360 opcional."""
-    direccion = str(row.get("Direccion", "")).strip()
-    barrio = str(row.get("Barrio", "")).strip()
-    ubicacion = direccion
-    if barrio:
-        ubicacion = f"{direccion}, {barrio}" if direccion else barrio
-
-    precio = str(row.get("Precio", "")).strip()
-    ambientes = str(row.get("Ambientes", "")).strip()
-    caracteristicas = str(row.get("Caracteristicas", "")).strip()
-
-    tipo = ""
-    if caracteristicas:
-        first = caracteristicas.split("-")[0].strip()
-        if first:
-            tipo = first
-
-    title = f"*Opción {index} — {ubicacion}*" if ubicacion else f"*Opción {index}*"
-
-    detail_parts: list[str] = []
-    if precio:
-        detail_parts.append(f"Precio: ${precio}" if not precio.startswith("$") else f"Precio: {precio}")
-    if ambientes:
-        detail_parts.append(f"{ambientes} ambientes")
-    if tipo:
-        detail_parts.append(tipo)
-
-    lines = [title]
-    if detail_parts:
-        lines.append(" | ".join(detail_parts))
-
-    tour = tour_360_url(row)
-    if tour:
-        lines.append(f"🔄 Tour 360°: {tour}")
-
-    return "\n".join(lines)
+    """Caption para mensaje imagen: encabezado + características (+ tour si aplica)."""
+    return build_property_ficha(
+        row,
+        include_media_links=False,
+        option_index=index,
+    )
 
 
 def build_listing_fallback_text(row: dict[str, Any], index: int) -> str:
