@@ -9,10 +9,13 @@ from app.flow_triggers import (
 )
 from app.session_state import SessionState, resolve_flow_path
 from app.lead_context import (
+    bot_asked_visit_time_preference,
+    conversation_wants_visit_rent,
     current_message_is_browse_only,
     extract_property_ref,
     format_user_messages_plain,
     qualifies_for_lead_notification,
+    rent_visit_ready_for_alert,
     user_declined_zone_preference,
 )
 from app.leads import LeadClassification
@@ -126,17 +129,61 @@ def test_alquiler_mild_interest_does_not_qualify_for_lead() -> None:
     )
 
 
-def test_alquiler_visit_request_qualifies_for_lead() -> None:
+def test_alquiler_verlos_detected_as_visit_intent() -> None:
+    assert conversation_wants_visit_rent("Cuando podría verlos?")
+
+
+def test_alquiler_visit_before_preference_does_not_qualify() -> None:
     history: list[HistoryTurn] = [
-        HistoryTurn(role="user", content="quiero visitar el de Don Bosco 1800"),
+        HistoryTurn(role="user", content="quiero alquilar"),
     ]
-    assert qualifies_for_lead_notification(
+    assert not rent_visit_ready_for_alert(
         history,
-        "quiero visitar el de Don Bosco 1800",
+        "los dos me interesan. Cuando podría verlos?",
+        "alquiler",
+    )
+    assert not qualifies_for_lead_notification(
+        history,
+        "los dos me interesan. Cuando podría verlos?",
         flow_path="alquiler",
         catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
         catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
     )
+
+
+def test_alquiler_visit_qualifies_after_time_preference_answer() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+        HistoryTurn(
+            role="assistant",
+            content="¿Preferís mañana, tarde o fin de semana para la visita?",
+        ),
+        HistoryTurn(
+            role="user",
+            content="los dos me interesan. Cuando podría verlos?",
+        ),
+    ]
+    assert bot_asked_visit_time_preference(history)
+    assert rent_visit_ready_for_alert(
+        history,
+        "preferentemente por la tarde",
+        "alquiler",
+    )
+    assert qualifies_for_lead_notification(
+        history,
+        "preferentemente por la tarde",
+        flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+    )
+
+
+def test_alquiler_visit_and_preference_same_message_qualifies() -> None:
+    history: list[HistoryTurn] = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+    ]
+    msg = "quiero verlos, preferentemente por la tarde"
+    assert rent_visit_ready_for_alert(history, msg, "alquiler")
 
 
 def test_apply_visit_handoff_skips_replacement_for_alquiler() -> None:

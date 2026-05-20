@@ -20,9 +20,10 @@ from app.lead_context import (
     format_conversation_for_classifier,
     format_user_messages_plain,
     lead_type_from_flow_path,
+    build_rent_visit_lead_notes,
     qualifies_for_lead_notification,
+    rent_visit_ready_for_alert,
     user_signals_real_interest_current_message,
-    user_signals_real_interest_rent_current_message,
 )
 from app.conversation import HistoryTurn, format_history_plain, get_conversation_history
 from app.db import get_engine, session_scope
@@ -55,7 +56,9 @@ _CLASSIFIER_SYSTEM_BASE = (
     '- "is_real_interest": boolean\n'
     '- "property_ref": string (ID o dirección del catálogo SOLO si el cliente la nombró; "" si no)\n'
     '- "interest_summary": string (1-2 oraciones en español sobre lo que EL CLIENTE dijo)\n'
-    '- "conversation_summary": string (2-4 oraciones resumiendo solo mensajes del cliente)\n\n'
+    '- "conversation_summary": string (2-4 oraciones en prosa para un asesor humano; '
+    "sintetizá zona, presupuesto, tipo de búsqueda y pedidos concretos del cliente; "
+    "**prohibido** copiar líneas ni usar el formato \"Cliente: ...\")\n\n"
     "is_real_interest=true solo si el CLIENTE, con sus palabras, muestra intención clara: "
     "visitar, reservar, negociar, pedir un asesor humano, o elegir una propiedad concreta "
     "(ID, dirección o 'me interesa esa/la de X'). "
@@ -65,10 +68,11 @@ _CLASSIFIER_SYSTEM_BASE = (
 
 _CLASSIFIER_ALQUILER_NOTE = (
     "\n\nContexto: flujo ALQUILER (inquilino). "
-    "is_real_interest=true SOLO si pide visitar/ver un inmueble, hablar con asesor humano "
-    "o que lo contacten para coordinar. "
-    "is_real_interest=false si solo explora, pide más opciones, elige favorita "
-    "('me gusta', 'me interesa', 'opción 2') o pide más información sin visita ni asesor."
+    "is_real_interest=true si pide visitar/ver inmuebles, hablar con asesor humano, "
+    "o ya indicó preferencia horaria (mañana/tarde/fin de semana) tras pedir visita. "
+    "Incluí en conversation_summary la preferencia horaria si la mencionó. "
+    "is_real_interest=false si solo explora, pide más opciones o elige favorita "
+    "sin pedir visita ni dar franja horaria tras la consulta del bot."
 )
 
 
@@ -189,6 +193,30 @@ def should_run_lead_classifier(
     return False
 
 
+_TRANSCRIPT_LINE_RE = re.compile(r"^\s*cliente\s*:", re.I | re.M)
+
+_SUMMARIZER_SYSTEM = (
+    "Sos un asesor inmobiliario. Recibís los mensajes del cliente (a veces con prefijo "
+    "'Cliente:'). Escribí un resumen de 2 a 4 oraciones en español, en tercera persona, "
+    "para que un colega humano entienda qué busca sin leer el chat entero. "
+    "Incluí: intención (compra/alquiler), zona o barrio, presupuesto si lo dijo, "
+    "propiedad u opción de interés, y pedidos concretos (fotos, visita, asesor). "
+    "Respondé solo el resumen en prosa, sin JSON, sin viñetas, sin copiar mensajes línea a línea."
+)
+
+
+def is_transcript_summary(text: str) -> bool:
+    """Detecta si el texto es transcripción cruda en lugar de resumen."""
+    body = text.strip()
+    if not body:
+        return True
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return "cliente:" in body.lower()[:80]
+    client_lines = sum(1 for ln in lines if _TRANSCRIPT_LINE_RE.match(ln))
+    return client_lines >= 2 or client_lines >= len(lines) // 2
+
+
 def _parse_classifier_json(raw: str) -> LeadClassification | None:
     text = raw.strip()
     if text.startswith("```"):
@@ -239,6 +267,55 @@ async def classify_interest(
     if parsed is None:
         logger.warning("Lead classifier: JSON invalido raw=%s", raw[:500])
     return parsed
+
+
+async def summarize_user_conversation(
+    user_conversation: str,
+    *,
+    flow_path: str = "compra",
+) -> str:
+    """Resumen en prosa vía LLM (fallback cuando el clasificador devuelve transcripción)."""
+    text = user_conversation.strip()
+    if not text:
+        return ""
+    branch = (flow_path or "compra").strip().lower()
+    raw = await chat_completion(
+        [
+            {"role": "system", "content": _SUMMARIZER_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"Rama del flujo: {branch}\n\n"
+                    f"Mensajes del cliente:\n{text[:3500]}"
+                ),
+            },
+        ],
+        model=_lead_model(),
+        max_tokens=280,
+        temperature=0.2,
+    )
+    summary = raw.strip()
+    if summary.startswith("```"):
+        summary = re.sub(r"^```(?:\w+)?\s*", "", summary)
+        summary = re.sub(r"\s*```$", "", summary).strip()
+    return summary[:1200]
+
+
+async def ensure_intelligent_conversation_summary(
+    conversation_summary: str,
+    user_conversation: str,
+    *,
+    flow_path: str = "compra",
+) -> str:
+    candidate = conversation_summary.strip()
+    if candidate and not is_transcript_summary(candidate):
+        return candidate[:1200]
+    synthesized = await summarize_user_conversation(
+        user_conversation, flow_path=flow_path
+    )
+    if synthesized:
+        return synthesized
+    return user_conversation.strip()[:1200]
 
 
 def _apply_lead_qualification_gate(
@@ -307,10 +384,22 @@ async def evaluate_lead_interest(
         flow_just_switched=flow_just_switched,
     )
     if classification is not None and classification.is_real_interest:
+        smart_summary = await ensure_intelligent_conversation_summary(
+            classification.conversation_summary,
+            user_conversation,
+            flow_path=branch,
+        )
+        if smart_summary != classification.conversation_summary:
+            classification = LeadClassification(
+                is_real_interest=classification.is_real_interest,
+                property_ref=classification.property_ref,
+                interest_summary=classification.interest_summary,
+                conversation_summary=smart_summary,
+            )
         return classification
 
     has_signals = (
-        user_signals_real_interest_rent_current_message(current_user_text)
+        rent_visit_ready_for_alert(history, current_user_text, flow_path)
         if branch == "alquiler"
         else user_signals_real_interest_current_message(current_user_text)
     )
@@ -336,26 +425,47 @@ async def evaluate_lead_interest(
         current_user_text=current_user_text,
         user_only=True,
     )
-    current = current_user_text.strip()
     summary_parts: list[str] = []
-    wants_visit = (
-        conversation_wants_visit_rent(current)
-        if branch == "alquiler"
-        else conversation_wants_visit(current)
-    )
-    if wants_visit:
-        summary_parts.append("Cliente pide visitar o ver un inmueble.")
-    if conversation_requests_human(current):
-        summary_parts.append("Cliente pide contacto con un asesor humano.")
+    if branch == "alquiler":
+        rent_notes = build_rent_visit_lead_notes(
+            history, current_user_text, flow_path
+        )
+        if rent_notes:
+            summary_parts.append(rent_notes)
+        elif conversation_requests_human(current_user_text):
+            summary_parts.append("Cliente pide contacto con un asesor humano.")
+        else:
+            summary_parts.append("Cliente listo para coordinar visita (alquiler).")
+    else:
+        current = current_user_text.strip()
+        if conversation_wants_visit(current):
+            summary_parts.append("Cliente pide visitar o ver un inmueble.")
+        if conversation_requests_human(current):
+            summary_parts.append("Cliente pide contacto con un asesor humano.")
+        if not summary_parts:
+            summary_parts.append("Cliente muestra interés concreto según señales del mensaje.")
     if prop:
         summary_parts.append(f"Referencia del catálogo: {prop}.")
-    if not summary_parts:
-        summary_parts.append("Cliente muestra interés concreto según señales del mensaje.")
+    smart_summary = await ensure_intelligent_conversation_summary(
+        "",
+        user_conversation,
+        flow_path=branch,
+    )
+    if branch == "alquiler":
+        rent_notes = build_rent_visit_lead_notes(
+            history, current_user_text, flow_path
+        )
+        if rent_notes and rent_notes not in smart_summary:
+            smart_summary = (
+                f"{smart_summary}\n\n{rent_notes}".strip()
+                if smart_summary.strip()
+                else rent_notes
+            )
     return LeadClassification(
         is_real_interest=True,
         property_ref=prop,
         interest_summary=" ".join(summary_parts),
-        conversation_summary=conversation_summary,
+        conversation_summary=smart_summary,
     )
 
 

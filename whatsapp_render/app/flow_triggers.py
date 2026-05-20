@@ -10,14 +10,22 @@ from app.lead_context import (
     conversation_wants_visit,
     conversation_wants_visit_rent,
     extract_property_ref,
+    format_conversation_for_classifier,
     format_user_messages_plain,
     lead_type_from_flow_path,
     should_suppress_visit_alerts,
     user_messages_for_flow,
     user_signals_real_interest_current_message,
-    user_signals_real_interest_rent_current_message,
+    build_rent_visit_lead_notes,
+    rent_visit_ready_for_alert,
 )
-from app.leads import LeadClassification, LeadType, evaluate_lead_interest, try_register_flow_alert
+from app.leads import (
+    LeadClassification,
+    LeadType,
+    ensure_intelligent_conversation_summary,
+    evaluate_lead_interest,
+    try_register_flow_alert,
+)
 from app.waitlist import register_waitlist_entry
 from app.waitlist_context import should_register_waitlist
 from app.prompts.flow_master import CLOSING_CAPTACION_TEXT, format_visit_handoff
@@ -191,7 +199,9 @@ async def resolve_flow_alerts(
     if (
         path == "alquiler"
         and not filtered
-        and user_signals_real_interest_rent_current_message(current_user_text)
+        and rent_visit_ready_for_alert(
+            history, current_user_text, flow_path
+        )
     ):
         classification = classification or await evaluate_lead_interest(
             history=history,
@@ -270,6 +280,9 @@ async def process_flow_alerts(
         else f"Cliente: {current_user_text}"
     )
     user_messages = user_messages_for_flow(history, current_user_text, flow_path)
+    user_conversation = format_conversation_for_classifier(
+        history, current_user_text, flow_path=flow_path
+    )
     property_ref = extract_property_ref(
         "",
         flow_path=flow_path,
@@ -293,12 +306,32 @@ async def process_flow_alerts(
                 flow_path,
                 classification=classification,
                 user_messages_text=user_messages,
+                history=history,
+                current_user_text=current_user_text,
             )
-            summary = (
-                classification.conversation_summary.strip()
-                if classification and classification.conversation_summary.strip()
-                else full_text[:1200]
-            )
+            convo_for_summary = user_conversation or full_text
+            if classification and classification.conversation_summary.strip():
+                summary = await ensure_intelligent_conversation_summary(
+                    classification.conversation_summary,
+                    convo_for_summary,
+                    flow_path=flow_path,
+                )
+            else:
+                summary = await ensure_intelligent_conversation_summary(
+                    "",
+                    convo_for_summary,
+                    flow_path=flow_path,
+                )
+            if lead_type == "alquiler":
+                visit_notes = build_rent_visit_lead_notes(
+                    history, current_user_text, flow_path
+                )
+                if visit_notes and visit_notes not in summary:
+                    summary = (
+                        f"{summary}\n\n{visit_notes}".strip()
+                        if summary.strip()
+                        else visit_notes
+                    )
             try:
                 await try_register_flow_alert(
                     lead_type=lead_type,
@@ -360,13 +393,24 @@ def _interest_for_alert(
     *,
     classification: LeadClassification | None = None,
     user_messages_text: str = "",
+    history: list[HistoryTurn] | None = None,
+    current_user_text: str = "",
 ) -> str:
     if lead_type == "captacion":
         summary = capture_summary_text(capture)
         return summary or "Propietario interesado en vender / tasar su inmueble."
 
+    rent_notes = ""
+    if lead_type == "alquiler" and history is not None:
+        rent_notes = build_rent_visit_lead_notes(
+            history, current_user_text, flow_path
+        )
+
     if classification and classification.interest_summary.strip():
-        return classification.interest_summary.strip()
+        base = classification.interest_summary.strip()
+        if rent_notes and rent_notes not in base:
+            return f"{base} {rent_notes}".strip()
+        return base
 
     op = "alquiler" if lead_type == "alquiler" else "compra/venta"
     prop = (property_ref or "").strip()
@@ -383,6 +427,8 @@ def _interest_for_alert(
         parts.append("Pide que lo contacte un asesor humano.")
     else:
         parts.append("Mostró interés concreto en una propiedad del catálogo.")
+    if rent_notes:
+        parts.append(rent_notes)
     if prop:
         parts.append(f"Referencia: {prop}.")
     parts.append("El bot no agendó día ni horario; debe contactarlo un asesor.")

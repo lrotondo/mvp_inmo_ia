@@ -238,7 +238,12 @@ Requiere `DATABASE_URL`. Tras cada respuesta, **solo si el mensaje o el historia
 - Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
 - `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
 - Campos: `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
+- `conversation_summary`: resumen en prosa (2–4 oraciones) generado por LLM; no es transcripción línea a línea del chat
 - Mismo cliente + propiedad en 24 h → **actualiza** la fila (sin reenviar aviso).
+
+### Alquiler: visita y preferencia horaria
+
+En la rama **alquiler**, `[ALERTA_ALQUILER]` y el lead se registran cuando el cliente ya dio **preferencia horaria** (mañana/tarde/fin de semana) tras pedir visita, no en el primer “¿cuándo puedo verlos?”. El aviso y la fila en `client_leads` incluyen texto del tipo `Preferencia horaria: tarde` e interés en dos opciones si aplica.
 
 ### Aviso por WhatsApp al equipo
 
