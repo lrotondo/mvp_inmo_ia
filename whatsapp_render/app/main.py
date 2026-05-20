@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
 from app.catalog import get_catalog_for_flow
@@ -43,6 +44,8 @@ from app.tenant_service import (
     fetch_tenant_context,
 )
 from app.webhook_dedup import claim_inbound_message_id
+from app.onboarding import onboarding_router
+from app.onboarding.account_update import process_account_update_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("ONBOARDING_CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+app.include_router(onboarding_router)
+
 
 @app.get("/")
 def root() -> dict[str, str]:
@@ -104,6 +123,7 @@ def root() -> dict[str, str]:
         "service": "whatsapp_render",
         "health": "/health",
         "webhook": "/meta/whatsapp",
+        "onboarding_config": "/api/onboarding/config",
     }
 
 
@@ -425,6 +445,13 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         "Payload object=%s",
         payload.get("object"),
     )
+
+    account_updates = await asyncio.to_thread(
+        process_account_update_webhook,
+        payload,
+    )
+    if account_updates:
+        logger.info("account_update procesados=%s", account_updates)
 
     incoming = _extract_incoming_messages(payload)
 

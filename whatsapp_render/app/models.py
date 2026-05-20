@@ -21,6 +21,36 @@ class Tenant(Base):
     system_prompt = mapped_column(Text, nullable=True)
     catalog_csv_path = mapped_column(String(512), nullable=True)
     catalog_rent_csv_path = mapped_column(String(512), nullable=True)
+    waba_id = mapped_column(String(64), nullable=True, index=True)
+    business_portfolio_id = mapped_column(String(64), nullable=True)
+    onboarding_status = mapped_column(String(32), nullable=False, default="manual")
+    onboarding_error = mapped_column(Text, nullable=True)
+    connected_at = mapped_column(DateTime(timezone=True), nullable=True)
+    token_expires_at = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OnboardingSession(Base):
+    __tablename__ = "onboarding_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    invite_token = mapped_column(String(64), nullable=True, unique=True, index=True)
+    status = mapped_column(String(32), nullable=False, default="pending")
+    waba_id = mapped_column(String(64), nullable=True, index=True)
+    phone_number_id = mapped_column(String(64), nullable=True, index=True)
+    business_portfolio_id = mapped_column(String(64), nullable=True)
+    tenant_id = mapped_column(Integer, nullable=True)
+    error_message = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class ChatSession(Base):

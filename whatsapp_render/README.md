@@ -38,6 +38,44 @@ Servicio para responder WhatsApp con un solo backend:
 | `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 | `LISTING_IMAGE_DELIVERY` | no | Default `true`; `false` = listados en un solo mensaje de texto |
+| `META_APP_ID` | onboarding | App ID de Meta (panel Embedded Signup) |
+| `META_EMBEDDED_SIGNUP_CONFIG_ID` | onboarding | Configuration ID de Facebook Login for Business |
+| `ONBOARDING_API_SECRET` | onboarding | Bearer para panel → `POST /api/onboarding/*` |
+| `ONBOARDING_CORS_ORIGINS` | onboarding | Orígenes del panel separado, separados por coma (HTTPS) |
+| `ONBOARDING_DEFAULT_CATALOG_SALE_PATH` | no | Catálogo venta por defecto tras conectar |
+| `ONBOARDING_DEFAULT_CATALOG_RENT_PATH` | no | Catálogo alquiler por defecto tras conectar |
+
+## Embedded Signup (Tech Provider)
+
+Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compartir contraseñas. Requiere alta como **Tech Provider** en Meta (checklist: [`docs/META_TECH_PROVIDER.md`](docs/META_TECH_PROVIDER.md)).
+
+### Componentes
+
+| Pieza | Ubicación |
+|-------|-----------|
+| API onboarding | `app/onboarding/` — `GET /api/onboarding/config`, `POST /complete`, `PATCH /tenants/{id}` |
+| Panel frontend | [`onboarding_panel/`](onboarding_panel/) (Vite, desplegar en HTTPS) |
+| Migración SQL | [`migrations/embedded_signup.sql`](migrations/embedded_signup.sql) |
+| Webhook respaldo | `account_update` en `POST /meta/whatsapp` |
+
+### Flujo
+
+1. Inmobiliaria abre el panel → **Conectar con Facebook/WhatsApp** (`FB.login` + Embedded Signup v4).
+2. Meta devuelve `code` (30 s) + `waba_id` / `phone_number_id` (evento `WA_EMBEDDED_SIGNUP`).
+3. Backend: intercambia código → token, suscribe webhooks al WABA, registra número, guarda fila en `tenants`.
+4. Paso 2 en panel: URLs de catálogo venta/alquiler.
+
+**Desarrollo / un solo cliente:** seguir usando [`seed_tenant`](app/seed_tenant.py) (`onboarding_status=manual`).
+
+### Endpoints API (panel)
+
+- `GET /api/onboarding/config` — público (`app_id`, `config_id`)
+- `POST /api/onboarding/session-event` — Bearer `ONBOARDING_API_SECRET`
+- `POST /api/onboarding/complete` — Bearer
+- `GET /api/onboarding/status/{tenant_id}` — Bearer
+- `PATCH /api/onboarding/tenants/{tenant_id}` — Bearer (catálogo, nombre, prompt)
+
+En Meta, suscribir también el webhook **`account_update`** (respaldo si el navegador cierra el popup antes de `complete`).
 
 ## Modelo `tenants` (Postgres)
 
@@ -49,10 +87,17 @@ Columnas principales:
 - `system_prompt` — opcional; si vacío se usa el prompt **Espacios360 Flow** del código
 - `catalog_csv_path` — **Venta**: ruta CSV (`data/tenants/foo.csv`) o URL/ID de Google Sheet
 - `catalog_rent_csv_path` — **Alquiler**: ruta CSV o URL/ID de Google Sheet (obligatorio si venta es Sheet)
+- `waba_id`, `business_portfolio_id` — Embedded Signup
+- `onboarding_status` — `manual` | `connected` | `failed` | `pending_token`
+- `connected_at`, `onboarding_error`, `token_expires_at` — opcionales
+
+Tabla `onboarding_sessions`: respaldo de assets del popup antes del intercambio de token.
 
 En el primer deploy con `DATABASE_URL`, las tablas se crean con `create_all` al arrancar.
 
 ### Migración en Postgres existente (si ya tenías tablas)
+
+Ejecutar también [`migrations/embedded_signup.sql`](migrations/embedded_signup.sql) para columnas de onboarding.
 
 ```sql
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS catalog_rent_csv_path VARCHAR(512);
@@ -74,7 +119,9 @@ CREATE INDEX IF NOT EXISTS ix_chat_sessions_phone_number_id ON chat_sessions (ph
 CREATE INDEX IF NOT EXISTS ix_chat_sessions_wa_id ON chat_sessions (wa_id);
 ```
 
-## Alta manual del primer cliente
+## Alta manual del primer cliente (desarrollo)
+
+Usar cuando **aún no** tenés Tech Provider aprobado o para pruebas locales.
 
 Desde la carpeta `whatsapp_render` con `DATABASE_URL` exportada:
 
@@ -110,8 +157,9 @@ Si no hay match, se responde `200` con `{"ok": true}` y se registra un warning e
 1. En tu app de Meta, habilitar **WhatsApp**.
 2. Webhook URL: `https://TU_SERVICIO.onrender.com/meta/whatsapp`
 3. Verify token = `META_VERIFY_TOKEN`
-4. Suscribir evento `messages`
+4. Suscribir eventos `messages` y `account_update`
 5. `META_APP_SECRET` desde la app (para firma webhook)
+6. Dominios OAuth: panel en HTTPS (`onboarding_panel`) — ver [`docs/META_TECH_PROVIDER.md`](docs/META_TECH_PROVIDER.md)
 
 ## Desarrollo local
 

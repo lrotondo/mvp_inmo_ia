@@ -68,6 +68,7 @@ def main() -> None:
                     system_prompt=system_prompt,
                     catalog_csv_path=catalog,
                     catalog_rent_csv_path=catalog_rent,
+                    onboarding_status="manual",
                 )
             )
             action = "creado"
@@ -77,6 +78,8 @@ def main() -> None:
             row.system_prompt = system_prompt
             row.catalog_csv_path = catalog
             row.catalog_rent_csv_path = catalog_rent
+            if not row.onboarding_status:
+                row.onboarding_status = "manual"
             action = "actualizado"
 
     print(f"Tenant {action}: phone_number_id={args.phone_number_id.strip()!r}")

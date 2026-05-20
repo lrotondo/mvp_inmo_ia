@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conectar WhatsApp — Espacios360</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header>
+        <h1>Conectar WhatsApp</h1>
+        <p class="subtitle">
+          Vinculá tu inmobiliaria con Meta Business. La facturación de conversaciones
+          se gestiona en tu Meta Business Suite.
+        </p>
+      </header>
+
+      <section id="step-connect" class="card">
+        <p id="config-status" class="muted">Cargando configuración…</p>
+        <button id="btn-connect" type="button" class="btn-meta" disabled>
+          Conectar con Facebook / WhatsApp
+        </button>
+        <p id="connect-hint" class="muted small"></p>
+      </section>
+
+      <section id="step-catalog" class="card hidden">
+        <h2>Catálogo de propiedades</h2>
+        <p class="muted small">
+          Paso 2: indicá las planillas o rutas CSV que usará el bot (venta y alquiler).
+        </p>
+        <label>
+          Venta (URL Google Sheet o ruta CSV)
+          <input id="catalog-sale" type="text" placeholder="https://docs.google.com/..." />
+        </label>
+        <label>
+          Alquiler (URL Google Sheet o ruta CSV)
+          <input id="catalog-rent" type="text" placeholder="https://docs.google.com/..." />
+        </label>
+        <label>
+          Nombre visible
+          <input id="tenant-name" type="text" placeholder="Inmobiliaria Demo" />
+        </label>
+        <button id="btn-save-catalog" type="button" class="btn-primary">Guardar catálogo</button>
+        <p id="catalog-status" class="muted small"></p>
+      </section>
+
+      <section id="step-done" class="card hidden success">
+        <h2>Listo</h2>
+        <p id="done-summary"></p>
+      </section>
+
+      <section id="step-error" class="card hidden error">
+        <h2>Error</h2>
+        <p id="error-message"></p>
+      </section>
+    </main>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
