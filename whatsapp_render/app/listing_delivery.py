@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.catalog import get_properties_by_ids, primary_photo_url
+from app.detail_media import try_deliver_single_property_visual
 from app.property_ficha import build_property_ficha
 from app.meta_client import (
     is_public_https_image_url,
@@ -99,12 +100,35 @@ async def deliver_bot_response(
     message: str,
     catalog_csv_path: str | None,
     graph_version: str | None = None,
+    current_user_text: str = "",
+    flow_path: str = "compra",
+    history: list | None = None,
+    catalog_sale_path: str | None = None,
+    catalog_rent_path: str | None = None,
+    property_ref: str = "",
 ) -> str:
     """
     Envía la respuesta al cliente. Listados con [LISTADO:ids] → intro + imágenes + cierre.
     Retorna texto consolidado para historial / detección de handoff.
     """
     body = (message or "").strip() or "No pude generar una respuesta en este momento."
+
+    visual_sent = await try_deliver_single_property_visual(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        to_wa_id=to_wa_id,
+        message=body,
+        catalog_csv_path=catalog_csv_path,
+        current_user_text=current_user_text,
+        flow_path=flow_path,
+        history=history,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+        property_ref=property_ref,
+        graph_version=graph_version,
+    )
+    if visual_sent is not None:
+        return visual_sent
 
     if not listing_image_delivery_enabled():
         await send_whatsapp_text_message(
