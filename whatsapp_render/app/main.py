@@ -34,7 +34,7 @@ from app.meta_auth import (
     validate_meta_verify_token,
 )
 from app.leads import try_register_lead
-from app.meta_client import send_whatsapp_text_message
+from app.listing_delivery import deliver_bot_response
 from app.prompts.flow_master import build_flow_system_prompt
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
 from app.tenant_service import (
@@ -574,16 +574,17 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             alerts,
         )
 
-        await send_whatsapp_text_message(
+        outbound_for_client = await deliver_bot_response(
             access_token=ctx.access_token,
             phone_number_id=ctx.phone_number_id,
             to_wa_id=wa_id,
             message=clean_answer,
+            catalog_csv_path=catalog_path_used,
         )
 
         try:
             await register_visit_lead_on_handoff_message(
-                outbound_message=clean_answer,
+                outbound_message=outbound_for_client,
                 alerts=alerts,
                 flow_path=flow_path,
                 ctx=ctx,
@@ -643,7 +644,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 ctx.phone_number_id,
                 wa_id,
                 user_text,
-                clean_answer,
+                outbound_for_client,
             )
         except Exception:
             logger.exception("Error guardando historial wa_id=%s", wa_id)

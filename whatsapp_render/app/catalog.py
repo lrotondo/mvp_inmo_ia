@@ -141,6 +141,48 @@ def load_properties() -> List[Dict[str, Any]]:
     return load_properties_for_catalog_path(None)
 
 
+def _normalize_property_id(raw: str) -> str:
+    return str(raw or "").strip()
+
+
+def _row_available_for_id_lookup(row: dict[str, Any]) -> bool:
+    """Lookup por [LISTADO:ids]: sin columna Disponible = incluir (CSV legacy)."""
+    raw = str(row.get("Disponible", "")).strip().lower()
+    if not raw:
+        return True
+    return is_property_available(row)
+
+
+def get_properties_by_ids(
+    catalog_csv_path: str | None,
+    property_ids: list[str],
+    *,
+    max_items: int = 3,
+) -> list[dict[str, Any]]:
+    """Filas por ID en orden del tag [LISTADO:...] (excluye Disponible explícito no)."""
+    wanted = [_normalize_property_id(pid) for pid in property_ids if _normalize_property_id(pid)]
+    if not wanted:
+        return []
+    if max_items > 0:
+        wanted = wanted[:max_items]
+
+    ref = _ref_for_path(catalog_csv_path)
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in _load_rows(ref):
+        if not _row_available_for_id_lookup(row):
+            continue
+        key = _normalize_property_id(str(row.get("ID", "")))
+        if key and key not in by_id:
+            by_id[key] = row
+
+    ordered: list[dict[str, Any]] = []
+    for pid in wanted:
+        row = by_id.get(pid)
+        if row is not None:
+            ordered.append(row)
+    return ordered
+
+
 def primary_photo_url(row: dict[str, Any]) -> str:
     """Foto del resumen/listado (columna foto_principal; legacy Link_Fotos)."""
     return str(row.get("foto_principal") or row.get("Link_Fotos") or "").strip()

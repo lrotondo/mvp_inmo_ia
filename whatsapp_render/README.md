@@ -37,6 +37,7 @@ Servicio para responder WhatsApp con un solo backend:
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | opcional | Solo planillas privadas; con enlace público (Lector) no hace falta |
 | `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
+| `LISTING_IMAGE_DELIVERY` | no | Default `true`; `false` = listados en un solo mensaje de texto |
 
 ## Modelo `tenants` (Postgres)
 
@@ -218,12 +219,15 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ### Enlaces de fotos y video (WhatsApp)
 
-- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji: `[📸 Ver fotos]`, `[🔄 Tour 360°]`, `[📸 Ver galería de fotos]`, `[🎥 Ver video]`.
-- En **listados** (hasta 3 opciones): `Tour_360` si existe; si no, `foto_principal`.
+- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji en **detalle** y pedidos puntuales: `[📸 Ver galería de fotos]`, `[🎥 Ver video]`, `[🔄 Tour 360°]`.
+- En **listados** (hasta 3 opciones): el LLM incluye el tag `[LISTADO:id1,id2,id3]` (IDs del catálogo). El backend ([`app/listing_delivery.py`](app/listing_delivery.py)) envía:
+  1. Texto de introducción
+  2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)
+  3. Pregunta de cierre
+- `LISTING_IMAGE_DELIVERY=false` desactiva el envío multi-imagen y vuelve a un solo mensaje de texto.
 - En **detalle / más info** o si **pide fotos**: `url_link_fotos` (carrusel); fallback `foto_principal`.
 - **Video** (detalle o pedido explícito): `url_link_video`.
-- La URL **no** se muestra en texto plano; el cliente ve un botón clicable con emoji.
-- Usá URLs públicas accesibles en el CSV o Google Sheet.
+- `foto_principal` debe ser URL **HTTPS pública** directa a JPG/PNG (Meta descarga la imagen). Drive o páginas web no sirven como imagen embebida.
 
 ## Historial de conversación
 
