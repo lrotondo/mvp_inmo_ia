@@ -10,10 +10,10 @@ from app.catalog import (
     get_properties_by_ids,
     primary_photo_url,
 )
+from app.friendly_links import deliver_text_with_friendly_links
 from app.meta_client import (
     is_public_https_image_url,
     send_whatsapp_image_message,
-    send_whatsapp_text_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,25 +143,23 @@ async def deliver_bot_response(
     body = (message or "").strip() or "No pude generar una respuesta en este momento."
 
     if not listing_image_delivery_enabled():
-        await send_whatsapp_text_message(
+        return await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             message=body,
             graph_version=graph_version,
         )
-        return body
 
     parsed = parse_listado_tag(body)
     if parsed is None:
-        await send_whatsapp_text_message(
+        return await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             message=body,
             graph_version=graph_version,
         )
-        return body
 
     rows = get_properties_by_ids(
         catalog_csv_path,
@@ -175,14 +173,13 @@ async def deliver_bot_response(
             catalog_csv_path,
         )
         fallback = parsed.text_without_tag or body
-        await send_whatsapp_text_message(
+        return await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             message=fallback,
             graph_version=graph_version,
         )
-        return fallback
 
     sendable: list[tuple[dict[str, Any], str, str | None]] = []
     for idx, row in enumerate(rows, start=1):
@@ -194,17 +191,16 @@ async def deliver_bot_response(
     if not any(url for _, _, url in sendable):
         logger.info("listado_sin_imagenes_https ids=%s; fallback texto", parsed.property_ids)
         fallback = parsed.text_without_tag or body
-        await send_whatsapp_text_message(
+        return await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             message=fallback,
             graph_version=graph_version,
         )
-        return fallback
 
     if parsed.intro.strip():
-        await send_whatsapp_text_message(
+        await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
@@ -232,27 +228,27 @@ async def deliver_bot_response(
                     image_url[:80],
                 )
                 fallback_item = build_listing_fallback_text(row, idx)
-                await send_whatsapp_text_message(
+                sent = await deliver_text_with_friendly_links(
                     access_token=access_token,
                     phone_number_id=phone_number_id,
                     to_wa_id=to_wa_id,
                     message=fallback_item,
                     graph_version=graph_version,
                 )
-                history_items.append(fallback_item)
+                history_items.append(sent)
         else:
             fallback_item = build_listing_fallback_text(row, idx)
-            await send_whatsapp_text_message(
+            sent = await deliver_text_with_friendly_links(
                 access_token=access_token,
                 phone_number_id=phone_number_id,
                 to_wa_id=to_wa_id,
                 message=fallback_item,
                 graph_version=graph_version,
             )
-            history_items.append(fallback_item)
+            history_items.append(sent)
 
     if parsed.closing.strip():
-        await send_whatsapp_text_message(
+        await deliver_text_with_friendly_links(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,

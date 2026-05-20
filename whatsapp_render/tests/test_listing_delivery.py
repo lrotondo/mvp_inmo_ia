@@ -71,8 +71,9 @@ def test_consolidate_history_text() -> None:
 def test_deliver_bot_response_single_text_without_tag() -> None:
     async def _run() -> None:
         with patch(
-            "app.listing_delivery.send_whatsapp_text_message",
+            "app.listing_delivery.deliver_text_with_friendly_links",
             new_callable=AsyncMock,
+            return_value="Hola, ¿en qué te ayudo?",
         ) as mock_text:
             result = await deliver_bot_response(
                 access_token="tok",
@@ -97,7 +98,7 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
     async def _run() -> None:
         with (
             patch(
-                "app.listing_delivery.send_whatsapp_text_message",
+                "app.listing_delivery.deliver_text_with_friendly_links",
                 new_callable=AsyncMock,
             ) as mock_text,
             patch(

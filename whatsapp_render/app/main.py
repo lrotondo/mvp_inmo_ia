@@ -34,6 +34,7 @@ from app.meta_auth import (
     validate_meta_verify_token,
 )
 from app.leads import try_register_lead
+from app.detail_media import enrich_detail_media_from_catalog
 from app.listing_delivery import deliver_bot_response
 from app.prompts.flow_master import build_flow_system_prompt
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
@@ -566,6 +567,11 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             current_user_text=user_text,
         )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
+        clean_answer = enrich_detail_media_from_catalog(
+            clean_answer,
+            catalog_csv_path=catalog_path_used,
+            property_ref=property_ref,
+        )
 
         logger.info(
             "LLM respondio answer_len=%s raw_alerts=%s alerts=%s",

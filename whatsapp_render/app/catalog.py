@@ -193,6 +193,44 @@ def gallery_photo_url(row: dict[str, Any]) -> str:
     return str(row.get("url_link_fotos") or "").strip()
 
 
+def property_video_url(row: dict[str, Any]) -> str:
+    return str(row.get("url_link_video") or "").strip()
+
+
+def get_property_row_by_ref(
+    catalog_csv_path: str | None,
+    property_ref: str,
+) -> dict[str, Any] | None:
+    """Busca fila por ID, 'ID x' o coincidencia en dirección/barrio."""
+    ref = _normalize_property_id(property_ref)
+    if not ref:
+        return None
+
+    id_candidate = ref
+    if id_candidate.lower().startswith("id "):
+        id_candidate = id_candidate[3:].strip()
+
+    by_id = get_properties_by_ids(catalog_csv_path, [id_candidate], max_items=1)
+    if by_id:
+        return by_id[0]
+
+    ref_lower = ref.lower()
+    best: dict[str, Any] | None = None
+    best_len = 0
+    catalog_ref = _ref_for_path(catalog_csv_path)
+    for row in _load_rows(catalog_ref):
+        if not _row_available_for_id_lookup(row):
+            continue
+        for field in ("Direccion", "Barrio"):
+            val = str(row.get(field, "")).strip().lower()
+            if len(val) < 4 or val not in ref_lower:
+                continue
+            if len(val) > best_len:
+                best = row
+                best_len = len(val)
+    return best
+
+
 def _media_suffix_parts(row: dict[str, Any]) -> str:
     parts: list[str] = []
     principal = primary_photo_url(row)
