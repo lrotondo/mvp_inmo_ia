@@ -10,6 +10,7 @@ from app.flow_triggers import (
 from app.session_state import SessionState, resolve_flow_path
 from app.lead_context import (
     bot_asked_visit_time_preference,
+    build_rent_visit_lead_notes,
     conversation_wants_visit_rent,
     current_message_is_browse_only,
     extract_property_ref,
@@ -176,6 +177,22 @@ def test_alquiler_visit_qualifies_after_time_preference_answer() -> None:
         catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
         catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
     )
+
+
+def test_build_rent_visit_lead_notes_includes_preference() -> None:
+    history = [
+        HistoryTurn(role="user", content="quiero alquilar"),
+        HistoryTurn(
+            role="assistant",
+            content="¿Preferís mañana, tarde o fin de semana?",
+        ),
+        HistoryTurn(role="user", content="me gustaría verlos"),
+    ]
+    notes = build_rent_visit_lead_notes(
+        history, "preferentemente por la tarde", "alquiler"
+    )
+    assert "Preferencia horaria: tarde" in notes
+    assert "visitar" in notes.lower() or "visita" in notes.lower()
 
 
 def test_alquiler_visit_and_preference_same_message_qualifies() -> None:

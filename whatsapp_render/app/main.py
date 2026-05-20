@@ -40,6 +40,7 @@ from app.tenant_service import (
     TenantContext,
     fetch_tenant_context,
 )
+from app.webhook_dedup import claim_inbound_message_id
 
 logger = logging.getLogger(__name__)
 
@@ -202,9 +203,9 @@ def _resolve_tenant(phone_number_id: str) -> TenantContext | None:
 
 def _extract_incoming_messages(
     payload: dict[str, Any],
-) -> list[tuple[str, str, str, str]]:
+) -> list[tuple[str, str, str, str, str]]:
 
-    incoming: list[tuple[str, str, str, str]] = []
+    incoming: list[tuple[str, str, str, str, str]] = []
 
     entries = payload.get("entry") or []
 
@@ -268,6 +269,8 @@ def _extract_incoming_messages(
                     (msg.get("text") or {}).get("body", "")
                 ).strip()
 
+                message_id = str(msg.get("id") or "").strip()
+
                 if sender and body:
                     incoming.append(
                         (
@@ -275,6 +278,7 @@ def _extract_incoming_messages(
                             body,
                             phone_number_id,
                             contact_name,
+                            message_id,
                         )
                     )
 
@@ -433,12 +437,16 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             "(sin mensajes text o payload solo status)."
         )
 
-    for wa_id, user_text, pnid, contact_name in incoming:
+    for wa_id, user_text, pnid, contact_name, message_id in incoming:
+
+        if not claim_inbound_message_id(message_id):
+            continue
 
         logger.info(
-            "Procesando mensaje wa_id=%s pnid=%s name=%r text=%s",
+            "Procesando mensaje wa_id=%s pnid=%s message_id=%s name=%r text=%s",
             wa_id,
             pnid,
+            (message_id or "")[:48],
             contact_name or None,
             user_text,
         )
@@ -572,29 +580,29 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             message=clean_answer,
         )
 
-        await process_flow_alerts(
-            alerts=alerts,
-            session=session,
-            flow_path=flow_path,
-            ctx=ctx,
-            contact_name=contact_name or None,
-            wa_id=wa_id,
-            history=history,
-            current_user_text=user_text,
-            classification=interest_classification,
-        )
-
-        await process_waitlist_registration(
-            has_waitlist_tag=raw_waitlist_tag,
-            flow_path=flow_path,
-            ctx=ctx,
-            contact_name=contact_name or None,
-            wa_id=wa_id,
-            history=history,
-            current_user_text=user_text,
-        )
-
         try:
+            await process_flow_alerts(
+                alerts=alerts,
+                session=session,
+                flow_path=flow_path,
+                ctx=ctx,
+                contact_name=contact_name or None,
+                wa_id=wa_id,
+                history=history,
+                current_user_text=user_text,
+                classification=interest_classification,
+            )
+
+            await process_waitlist_registration(
+                has_waitlist_tag=raw_waitlist_tag,
+                flow_path=flow_path,
+                ctx=ctx,
+                contact_name=contact_name or None,
+                wa_id=wa_id,
+                history=history,
+                current_user_text=user_text,
+            )
+
             await try_register_lead(
                 phone_number_id=ctx.phone_number_id,
                 wa_id=wa_id,
@@ -608,15 +616,22 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 skip_if_flow_alert_registered=bool(alerts),
             )
         except Exception:
-            logger.exception("Error registrando lead wa_id=%s", wa_id)
+            logger.exception(
+                "Error post-respuesta (alertas/lead/waitlist) wa_id=%s; "
+                "el cliente ya recibio el mensaje",
+                wa_id,
+            )
 
-        await asyncio.to_thread(
-            append_conversation_turn,
-            ctx.phone_number_id,
-            wa_id,
-            user_text,
-            clean_answer,
-        )
+        try:
+            await asyncio.to_thread(
+                append_conversation_turn,
+                ctx.phone_number_id,
+                wa_id,
+                user_text,
+                clean_answer,
+            )
+        except Exception:
+            logger.exception("Error guardando historial wa_id=%s", wa_id)
 
         logger.info(
             "Respuesta enviada a wa_id=%s",

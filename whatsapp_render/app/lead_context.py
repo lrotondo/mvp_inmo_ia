@@ -370,7 +370,7 @@ def build_rent_visit_lead_notes(
     parts: list[str] = []
     scoped = user_messages_for_flow(history, current_user_text, flow_path)
 
-    pref = extract_visit_time_preference_label(current)
+    pref = extract_visit_time_preference_label(current_user_text)
     if not pref:
         for line in reversed(scoped.split("\n")):
             pref = extract_visit_time_preference_label(line)
