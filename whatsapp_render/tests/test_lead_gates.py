@@ -6,7 +6,10 @@ from app.flow_triggers import (
     filter_alerts_by_flow_path,
     filter_alerts_by_real_interest,
     filter_alerts_suppressed_for_browse,
+    outbound_message_is_visit_handoff,
+    should_register_visit_lead_on_handoff,
 )
+from app.prompts.flow_master import format_visit_handoff
 from app.session_state import SessionState, resolve_flow_path
 from app.lead_context import (
     bot_asked_visit_time_preference,
@@ -201,6 +204,40 @@ def test_alquiler_visit_and_preference_same_message_qualifies() -> None:
     ]
     msg = "quiero verlos, preferentemente por la tarde"
     assert rent_visit_ready_for_alert(history, msg, "alquiler")
+
+
+def test_outbound_handoff_detects_standard_template() -> None:
+    assert outbound_message_is_visit_handoff(format_visit_handoff("ID 4"))
+
+
+def test_outbound_handoff_detects_natural_alquiler_phrase() -> None:
+    msg = (
+        "Un asesor humano se va a poner en contacto con vos "
+        "para coordinar la visita."
+    )
+    assert outbound_message_is_visit_handoff(msg)
+
+
+def test_outbound_handoff_rejects_time_preference_question() -> None:
+    msg = "¿Preferís mañana, tarde o fin de semana para la visita?"
+    assert not outbound_message_is_visit_handoff(msg)
+
+
+def test_should_register_visit_lead_only_on_handoff_turn() -> None:
+    handoff = format_visit_handoff("ID 2")
+    assert should_register_visit_lead_on_handoff(
+        handoff, ["ALERTA_VENTA"], "compra"
+    )
+    assert not should_register_visit_lead_on_handoff(
+        "¿Preferís tarde para la visita?",
+        ["ALERTA_ALQUILER"],
+        "alquiler",
+    )
+    assert not should_register_visit_lead_on_handoff(
+        handoff,
+        ["ALERTA_ALQUILER"],
+        "compra",
+    )
 
 
 def test_apply_visit_handoff_skips_replacement_for_alquiler() -> None:

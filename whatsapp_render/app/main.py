@@ -23,6 +23,7 @@ from app.flow_triggers import (
     apply_visit_handoff,
     parse_flow_alerts,
     process_flow_alerts,
+    register_visit_lead_on_handoff_message,
     process_waitlist_registration,
     resolve_flow_alerts,
 )
@@ -581,6 +582,19 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         )
 
         try:
+            await register_visit_lead_on_handoff_message(
+                outbound_message=clean_answer,
+                alerts=alerts,
+                flow_path=flow_path,
+                ctx=ctx,
+                contact_name=contact_name or None,
+                wa_id=wa_id,
+                history=history,
+                current_user_text=user_text,
+                classification=interest_classification,
+                session=session,
+            )
+
             await process_flow_alerts(
                 alerts=alerts,
                 session=session,
@@ -603,18 +617,19 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 current_user_text=user_text,
             )
 
-            await try_register_lead(
-                phone_number_id=ctx.phone_number_id,
-                wa_id=wa_id,
-                contact_name=contact_name or None,
-                catalog_csv_path=ctx.catalog_csv_path,
-                catalog_rent_csv_path=ctx.catalog_rent_csv_path,
-                flow_path=flow_path,
-                current_user_text=user_text,
-                access_token=ctx.access_token,
-                history=history,
-                skip_if_flow_alert_registered=bool(alerts),
-            )
+            if flow_path not in ("compra", "alquiler"):
+                await try_register_lead(
+                    phone_number_id=ctx.phone_number_id,
+                    wa_id=wa_id,
+                    contact_name=contact_name or None,
+                    catalog_csv_path=ctx.catalog_csv_path,
+                    catalog_rent_csv_path=ctx.catalog_rent_csv_path,
+                    flow_path=flow_path,
+                    current_user_text=user_text,
+                    access_token=ctx.access_token,
+                    history=history,
+                    skip_if_flow_alert_registered=bool(alerts),
+                )
         except Exception:
             logger.exception(
                 "Error post-respuesta (alertas/lead/waitlist) wa_id=%s; "

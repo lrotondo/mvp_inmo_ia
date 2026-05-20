@@ -57,6 +57,17 @@ _VISIT_ALERT_TAGS: frozenset[str] = frozenset({"ALERTA_VENTA", "ALERTA_ALQUILER"
 
 _WAITLIST_TAG_RE = re.compile(r"\[LISTA_ESPERA\]", re.I)
 
+# Mensaje saliente que cierra visita: el asesor contactará (momento de persistir el lead).
+_ADVISOR_HANDOFF_OUTBOUND_RE = re.compile(
+    r"(?:"
+    r"registr[eé]\s+tu\s+inter[eé]s|"
+    r"(?:un\s+)?asesor(?:\s+humano)?\s+(?:se\s+va\s+a\s+)?(?:comunicar|contactar|poner\s+en\s+contacto)|"
+    r"nuestro\s+equipo\s+se\s+va\s+a\s+comunicar|"
+    r"asesor\b[^.\n]{0,120}\bcoordinar\s+(?:la\s+)?visita"
+    r")",
+    re.I,
+)
+
 
 def parse_flow_alerts(text: str) -> tuple[str, list[AlertTag], bool]:
     tags: list[AlertTag] = []
@@ -226,6 +237,129 @@ def apply_captacion_closing(clean_text: str, alerts: list[AlertTag]) -> str:
     return clean_text
 
 
+def outbound_message_is_visit_handoff(text: str) -> bool:
+    """True si el mensaje al cliente comunica que un asesor lo contactará por la visita."""
+    return bool(_ADVISOR_HANDOFF_OUTBOUND_RE.search((text or "").strip()))
+
+
+def should_register_visit_lead_on_handoff(
+    outbound_message: str,
+    alerts: list[AlertTag],
+    flow_path: str,
+) -> bool:
+    """Lead de visita solo en el turno del handoff al cliente, con alerta de visita válida."""
+    if not outbound_message_is_visit_handoff(outbound_message):
+        return False
+    path = (flow_path or "").strip().lower()
+    if path not in ("compra", "alquiler"):
+        return False
+    expected: AlertTag = "ALERTA_VENTA" if path == "compra" else "ALERTA_ALQUILER"
+    return expected in alerts
+
+
+async def register_visit_lead_on_handoff_message(
+    *,
+    outbound_message: str,
+    alerts: list[AlertTag],
+    flow_path: str,
+    ctx: TenantContext,
+    contact_name: str | None,
+    wa_id: str,
+    history: list[HistoryTurn],
+    current_user_text: str,
+    classification: LeadClassification | None = None,
+    session: SessionState,
+) -> None:
+    """Persiste interés en client_leads cuando el bot avisa contacto del asesor."""
+    if not should_register_visit_lead_on_handoff(outbound_message, alerts, flow_path):
+        return
+
+    path = (flow_path or "").strip().lower()
+    expected: AlertTag = "ALERTA_VENTA" if path == "compra" else "ALERTA_ALQUILER"
+    lead_type = _lead_type_for_alert(expected, flow_path)
+
+    capture = merge_capture_from_conversation(session, history, current_user_text)
+    conversation_text = format_history_plain(history)
+    full_text = (
+        f"{conversation_text}\nCliente: {current_user_text}"
+        if conversation_text
+        else f"Cliente: {current_user_text}"
+    )
+    user_messages = user_messages_for_flow(history, current_user_text, flow_path)
+    user_conversation = format_conversation_for_classifier(
+        history, current_user_text, flow_path=flow_path
+    )
+    property_ref = extract_property_ref(
+        "",
+        flow_path=flow_path,
+        catalog_sale_path=ctx.catalog_csv_path,
+        catalog_rent_path=ctx.catalog_rent_csv_path,
+        history=history,
+        current_user_text=current_user_text,
+        user_only=True,
+    )
+    if classification and classification.property_ref.strip():
+        property_ref = classification.property_ref.strip()
+
+    interest = _interest_for_alert(
+        lead_type,
+        capture,
+        property_ref,
+        flow_path,
+        classification=classification,
+        user_messages_text=user_messages,
+        history=history,
+        current_user_text=current_user_text,
+    )
+    convo_for_summary = user_conversation or full_text
+    if classification and classification.conversation_summary.strip():
+        summary = await ensure_intelligent_conversation_summary(
+            classification.conversation_summary,
+            convo_for_summary,
+            flow_path=flow_path,
+        )
+    else:
+        summary = await ensure_intelligent_conversation_summary(
+            "",
+            convo_for_summary,
+            flow_path=flow_path,
+        )
+    if lead_type == "alquiler":
+        visit_notes = build_rent_visit_lead_notes(
+            history, current_user_text, flow_path
+        )
+        if visit_notes and visit_notes not in summary:
+            summary = (
+                f"{summary}\n\n{visit_notes}".strip()
+                if summary.strip()
+                else visit_notes
+            )
+
+    logger.info(
+        "Registrando lead de visita (handoff al cliente) wa_id=%s flow=%s",
+        wa_id,
+        flow_path,
+    )
+    try:
+        await try_register_flow_alert(
+            lead_type=lead_type,
+            phone_number_id=ctx.phone_number_id,
+            wa_id=wa_id,
+            contact_name=contact_name,
+            property_ref=property_ref,
+            interest_summary=interest,
+            conversation_summary=summary,
+            capture_summary=None,
+            access_token=ctx.access_token,
+        )
+    except Exception:
+        logger.exception(
+            "Error registrando lead visita (handoff) wa_id=%s flow=%s",
+            wa_id,
+            flow_path,
+        )
+
+
 def apply_visit_handoff(
     clean_text: str,
     alerts: list[AlertTag],
@@ -295,10 +429,12 @@ async def process_flow_alerts(
     if classification and classification.property_ref.strip():
         property_ref = classification.property_ref.strip()
 
-    if alerts:
-        for tag in alerts:
+    captacion_tags = [t for t in alerts if t == "ALERTA_CAPTACION_PROPIETARIO"]
+
+    if captacion_tags:
+        for tag in captacion_tags:
             lead_type = _lead_type_for_alert(tag, flow_path)
-            capture_summary = capture_summary_text(capture) if lead_type == "captacion" else None
+            capture_summary = capture_summary_text(capture)
             interest = _interest_for_alert(
                 lead_type,
                 capture,
@@ -322,16 +458,6 @@ async def process_flow_alerts(
                     convo_for_summary,
                     flow_path=flow_path,
                 )
-            if lead_type == "alquiler":
-                visit_notes = build_rent_visit_lead_notes(
-                    history, current_user_text, flow_path
-                )
-                if visit_notes and visit_notes not in summary:
-                    summary = (
-                        f"{summary}\n\n{visit_notes}".strip()
-                        if summary.strip()
-                        else visit_notes
-                    )
             try:
                 await try_register_flow_alert(
                     lead_type=lead_type,
@@ -350,8 +476,7 @@ async def process_flow_alerts(
                     lead_type,
                     wa_id,
                 )
-            if lead_type == "captacion":
-                bot_paused = True
+            bot_paused = True
 
     elif (
         flow_path == "captacion"

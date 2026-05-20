@@ -200,10 +200,10 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 
 1. **Triage** (`flow_path=nuevo`): saludo y pregunta si compra, alquila o vende su propiedad.
 2. **Compra** (`compra`): catálogo de venta; calificación financiera; bandera `[ALERTA_VENTA]` si hay interés alto.
-3. **Alquiler** (`alquiler`): catálogo de alquiler; prioriza mostrar opciones con pocas preguntas; bandera `[ALERTA_ALQUILER]`.
+3. **Alquiler** (`alquiler`): al entrar a la rama pregunta perfil (ambientes/dormitorios, zona, casa o depto); luego hasta 3 opciones del catálogo; bandera `[ALERTA_ALQUILER]` tras visita + preferencia horaria.
 4. **Captación** (`captacion`): recopila tipo, ubicación y m²/ambientes; cierre fijo y `[ALERTA_CAPTACION_PROPIETARIO]`; **pausa el bot** para ese chat (`bot_paused`).
 
-Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente y disparan lead + WhatsApp al asesor (`LEAD_WHATSAPP_NOTIFY_TO`).
+Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente. En **compra/alquiler**, el lead en `client_leads` y el WhatsApp al asesor se disparan **solo en el turno** en que el bot le dice al cliente que un asesor se comunicará para coordinar la visita (no al pedir preferencia horaria ni al listar opciones). Captación sigue registrando con `[ALERTA_CAPTACION_PROPIETARIO]`.
 
 **Catálogo alquiler:** si `catalog_rent_csv_path` está vacío y **venta es CSV local**, el backend busca `{nombre_venta}_alquiler.csv` en la misma carpeta. Si **venta es Google Sheet**, configurá explícitamente el Sheet de alquiler en `catalog_rent_csv_path`.
 
@@ -233,7 +233,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ## Leads (`client_leads`)
 
-Requiere `DATABASE_URL`. Tras cada respuesta, **solo si el mensaje o el historial tienen señales de interés** (visitar, comprar, precio, nombre de calle del catálogo, etc.), Groq clasifica con el modelo barato `GROQ_LEAD_MODEL` (default `llama-3.1-8b-instant`).
+Requiere `DATABASE_URL`. En **compra** y **alquiler**, el registro usa los datos ya recompilados (clasificador, referencia de propiedad, preferencia horaria en alquiler) **en el mismo turno** en que el mensaje saliente avisa contacto del asesor. No hay registro paralelo por clasificador en esas ramas. Captación y otros flujos pueden seguir usando el clasificador según corresponda.
 
 - Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
 - `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
@@ -243,7 +243,7 @@ Requiere `DATABASE_URL`. Tras cada respuesta, **solo si el mensaje o el historia
 
 ### Alquiler: visita y preferencia horaria
 
-En la rama **alquiler**, `[ALERTA_ALQUILER]` y el lead se registran cuando el cliente ya dio **preferencia horaria** (mañana/tarde/fin de semana) tras pedir visita, no en el primer “¿cuándo puedo verlos?”. El aviso y la fila en `client_leads` incluyen texto del tipo `Preferencia horaria: tarde` e interés en dos opciones si aplica.
+En la rama **alquiler**, la bandera `[ALERTA_ALQUILER]` se habilita cuando el cliente ya dio **preferencia horaria** (mañana/tarde/fin de semana) tras pedir visita, no en el primer “¿cuándo puedo verlos?”. La fila en `client_leads` se crea **en el turno siguiente** en que el bot confirma que un asesor lo contactará (mismo mensaje que ve el cliente). Ese registro incluye texto del tipo `Preferencia horaria: tarde` e interés en dos opciones si aplica.
 
 ### Aviso por WhatsApp al equipo
 
