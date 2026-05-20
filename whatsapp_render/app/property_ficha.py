@@ -72,6 +72,8 @@ def build_property_header_lines(
 def build_detail_media_links_block(row: dict[str, Any]) -> str:
     fotos = gallery_photo_url(row) or primary_photo_url(row)
     video = property_video_url(row)
+    if not fotos and not video:
+        return ""
     lines: list[str] = []
 
     if fotos and video:

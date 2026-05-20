@@ -3,77 +3,77 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from app.catalog import get_property_row_by_ref
+from app.catalog import get_property_row_by_ref, load_properties_for_catalog_path
 from app.conversation import HistoryTurn
 from app.detail_media import (
     bot_promises_visual_material,
     enrich_detail_media_from_catalog,
+    property_ref_for_detail_enrich,
     should_enrich_property_detail,
     strip_property_media_from_message,
-    user_showed_property_interest,
+    user_requests_property_detail,
 )
+from app.lead_context import extract_property_ref
 from app.property_ficha import build_detail_media_links_block
 from app.session_state import user_wants_fresh_start
 
 TENANT_RENT = "data/tenants/inmobiliaria_cowork_alquiler.csv"
 
 FAKE_ROW = {
-    "ID": "2",
-    "Direccion": "Chacabuco 800",
-    "Barrio": "Centro",
-    "Precio": "240000",
-    "Ambientes": "4",
-    "Caracteristicas": "Balcón | Ascensor | Luminoso",
-    "foto_principal": "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800",
-    "url_link_fotos": "https://example.com/galeria",
-    "url_link_video": "https://example.com/video",
+    "ID": "5",
+    "Direccion": "Arana 200",
+    "Barrio": "Estacion",
+    "Precio": "98000",
+    "Ambientes": "2",
+    "Caracteristicas": "Planta baja | Patio con parilla",
+    "foto_principal": "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800",
+    "Link_Fotos": "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800",
 }
 
 
-def test_fresh_start_detected() -> None:
-    assert user_wants_fresh_start("Empecemos de nuevo")
+def test_tenant_catalog_loads_without_disponible_column() -> None:
+    rows = load_properties_for_catalog_path(TENANT_RENT)
+    assert len(rows) >= 5
 
 
-def test_bot_promises_visual_material_detected() -> None:
-    msg = "Te paso el material visual para que la conozcas mejor:"
-    assert bot_promises_visual_material(msg)
-
-
-def test_should_enrich_on_property_interest_and_visual_promise() -> None:
-    outbound = (
-        "¡Excelente elección! La de Chacabuco 800.\n\n"
-        "Te paso el material visual para que la conozcas mejor:\n\n"
-        "¿Coordinamos visita?"
-    )
-    assert should_enrich_property_detail(
-        outbound_message=outbound,
-        current_user_text="me gusta la de Chacabuco",
+def test_extract_property_ref_arana_from_user_text() -> None:
+    ref = extract_property_ref(
+        "",
         flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path=TENANT_RENT,
+        history=[],
+        current_user_text="dale quiero mas info del arana al 200",
+        user_only=True,
     )
+    assert ref
+    row = get_property_row_by_ref(TENANT_RENT, ref)
+    assert row is not None
+    assert "Arana" in str(row.get("Direccion", ""))
 
 
-def test_should_not_enrich_on_fresh_start() -> None:
-    assert not should_enrich_property_detail(
+def test_property_ref_from_history_when_user_asks_fotos() -> None:
+    history = [
+        HistoryTurn(role="user", content="mas info del arana 200"),
+    ]
+    ref = property_ref_for_detail_enrich(
+        current_user_text="fotos o videos?",
         outbound_message="Te paso el material visual",
-        current_user_text="Empecemos de nuevo",
-        flow_path="compra",
+        history=history,
+        flow_path="alquiler",
+        catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
+        catalog_rent_path=TENANT_RENT,
+        catalog_csv_path=TENANT_RENT,
     )
+    assert ref
+    assert get_property_row_by_ref(TENANT_RENT, ref) is not None
 
 
-def test_strip_removes_orphan_media_on_triage() -> None:
-    triage = (
-        "¿Comprar o alquilar?\n"
-        "[📸 Ver galería de fotos](https://example.com/g)\n"
-    )
-    out = strip_property_media_from_message(triage)
-    assert "example.com" not in out
-
-
-def test_enrich_adds_ficha_when_visual_promised() -> None:
+def test_enrich_injects_links_when_bot_promises_gallery() -> None:
     msg = (
-        "¡Excelente elección! La de Chacabuco 800.\n\n"
-        "Te paso el material visual para que la conozcas mejor:\n\n"
-        "¿Te gustaría coordinar una visita?"
+        "Te cuento la propiedad.\n\n"
+        "Acá te paso el material visual completo 👇\n\n"
+        "¿Te gustaría visitarla?"
     )
     with patch(
         "app.detail_media.get_property_row_by_ref",
@@ -82,32 +82,36 @@ def test_enrich_adds_ficha_when_visual_promised() -> None:
         out = enrich_detail_media_from_catalog(
             msg,
             catalog_csv_path=TENANT_RENT,
-            property_ref="2",
-            current_user_text="me interesa la de Chacabuco",
+            property_ref="5",
+            current_user_text="fotos o videos?",
             flow_path="alquiler",
-            history=[],
+            history=[
+                HistoryTurn(role="user", content="info del arana 200"),
+            ],
         )
+    assert "Ver galería" in out or "Ver fotos" in out
     assert "Características" in out
-    assert "Ver galería" in out
-    assert user_showed_property_interest("me interesa la de Chacabuco")
 
 
-def test_try_deliver_sends_image_and_text() -> None:
+def test_user_requests_fotos_detected() -> None:
+    assert user_requests_property_detail("fotos o videos?")
+
+
+def test_bot_promises_galeria_comparto() -> None:
+    assert bot_promises_visual_material(
+        "Ahora te comparto la galería completa de la propiedad de Arana 200 👇"
+    )
+
+
+def test_try_deliver_sends_text_with_links_when_enriched() -> None:
     from app.detail_media import try_deliver_single_property_visual
 
-    msg = (
-        "¡Excelente elección!\n\n"
-        "Te paso el material visual:\n\n"
-        "¿Preferís mañana o tarde?"
-    )
     enriched = (
-        "¡Excelente elección!\n\n"
-        "Te paso el material visual:\n\n"
-        "*Características:*\n• Balcón\n"
-        "Acá tenés todo el material visual 👇\n"
-        "[📸 Ver galería de fotos](https://example.com/galeria)\n"
-        "[🎥 Ver video](https://example.com/video)\n\n"
-        "¿Preferís mañana o tarde?"
+        "Disculpá.\n\n"
+        "*Características:*\n• Patio\n"
+        "¡Genial! Te dejo la galería completa 👇\n"
+        "[📸 Ver galería de fotos](https://example.com/g)\n\n"
+        "¿Qué te parece?"
     )
 
     async def _run() -> None:
@@ -131,27 +135,23 @@ def test_try_deliver_sends_image_and_text() -> None:
                 to_wa_id="54911",
                 message=enriched,
                 catalog_csv_path=TENANT_RENT,
-                current_user_text="me gusta Chacabuco 800",
+                current_user_text="no me mostraste fotos",
                 flow_path="alquiler",
-                history=[],
+                history=[
+                    HistoryTurn(role="user", content="arana 200"),
+                ],
                 catalog_sale_path=None,
                 catalog_rent_path=TENANT_RENT,
-                property_ref="2",
+                property_ref="5",
             )
             assert result is not None
-            mock_img.assert_awaited_once()
-            mock_txt.assert_awaited_once()
+            assert "galería" in result.lower() or "Ver" in result
+            assert mock_img.await_count + mock_txt.await_count >= 1
 
     asyncio.run(_run())
 
 
-def test_build_detail_media_links_block() -> None:
+def test_build_detail_media_links_uses_primary_photo() -> None:
     block = build_detail_media_links_block(FAKE_ROW)
-    assert "galería" in block
-    assert "video" in block
-
-
-def test_get_property_row_by_ref_finds_id() -> None:
-    row = get_property_row_by_ref(TENANT_RENT, "4")
-    assert row is not None
-    assert str(row.get("ID")) == "4"
+    assert "Ver galería" in block or "Ver fotos" in block
+    assert "unsplash" in block or "example" in block

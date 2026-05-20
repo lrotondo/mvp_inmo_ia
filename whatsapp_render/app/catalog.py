@@ -123,11 +123,19 @@ def is_property_available(row: dict[str, Any]) -> bool:
     return raw in _AVAILABLE_VALUES
 
 
+def _catalog_has_disponible_column(rows: list[dict[str, Any]]) -> bool:
+    return any(str(row.get("Disponible", "")).strip() for row in rows)
+
+
 def load_properties_for_catalog_path(catalog_csv_path: str | None) -> List[Dict[str, Any]]:
     ref = _ref_for_path(catalog_csv_path)
     all_rows = list(_load_rows(ref))
+    if not all_rows:
+        return []
+    if not _catalog_has_disponible_column(all_rows):
+        return all_rows
     available = [row for row in all_rows if is_property_available(row)]
-    if all_rows and len(available) < len(all_rows):
+    if len(available) < len(all_rows):
         logger.debug(
             "catalog_availability path=%r total=%s available=%s",
             catalog_csv_path,
@@ -135,6 +143,14 @@ def load_properties_for_catalog_path(catalog_csv_path: str | None) -> List[Dict[
             len(available),
         )
     return available
+
+
+def iter_rows_for_property_matching(
+    catalog_csv_path: str | None,
+) -> list[dict[str, Any]]:
+    """Filas usables para resolver dirección/ID (misma regla que get_properties_by_ids)."""
+    ref = _ref_for_path(catalog_csv_path)
+    return [row for row in _load_rows(ref) if _row_available_for_id_lookup(row)]
 
 
 def load_properties() -> List[Dict[str, Any]]:

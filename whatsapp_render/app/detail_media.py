@@ -35,8 +35,8 @@ _TOUR_LINK_RE = re.compile(
 _LISTADO_TAG_RE = re.compile(r"\[LISTADO:", re.I)
 _MEDIA_INTRO_RE = re.compile(
     r"^\s*(?:Acá tenés todo el material visual|Te dejo la galería|"
-    r"Te comparto el video|¡Genial! Te dejo la galería|"
-    r"Te paso el material visual)",
+    r"Te comparto (?:el video|la galería)|¡Genial! Te dejo la galería|"
+    r"Te paso el material visual|material visual completo)",
     re.I,
 )
 
@@ -45,8 +45,14 @@ _DETAIL_REQUEST_RE = re.compile(
     r"m[aá]s\s+info|contame\s+m[aá]s|cu[eé]ntame\s+m[aá]s|"
     r"detalles?|ampli[aá]|"
     r"(?:ver|mostr(?:ar|ame))\s+(?:las\s+)?fotos|"
-    r"galer[ií]a|video|recorrido|tour\s*360"
+    r"fotos?|videos?|"
+    r"galer[ií]a|recorrido|tour\s*360"
     r")\b",
+    re.I,
+)
+
+_OPTION_NUMBER_RE = re.compile(
+    r"\bopci[oó]n\s*(?:n[°º]?\s*)?(\d+)\b",
     re.I,
 )
 
@@ -64,8 +70,9 @@ _PROPERTY_INTEREST_RE = re.compile(
 
 _BOT_VISUAL_PROMISE_RE = re.compile(
     r"\b("
-    r"material\s+visual|te\s+paso\s+(?:el\s+)?(?:material|fotos|video)|"
-    r"te\s+dejo\s+(?:la\s+)?galer[ií]a|"
+    r"material\s+visual|te\s+paso\s+(?:el\s+)?(?:material|fotos|video|galer[ií]a)|"
+    r"te\s+(?:dejo|comparto)\s+(?:la\s+)?galer[ií]a|"
+    r"galer[ií]a\s+completa|"
     r"conocela\s+mejor|conocerla\s+en\s+persona"
     r")\b",
     re.I,
@@ -130,6 +137,29 @@ def should_enrich_property_detail(
     return False
 
 
+def _property_ref_from_option_number(
+    text: str,
+    catalog_csv_path: str | None,
+) -> str:
+    """Resuelve 'opción 5' al ID de la fila en orden de catálogo (1-based)."""
+    match = _OPTION_NUMBER_RE.search((text or "").strip())
+    if not match:
+        return ""
+    from app.catalog import load_properties_for_catalog_path
+
+    try:
+        index = int(match.group(1))
+    except ValueError:
+        return ""
+    if index < 1:
+        return ""
+    rows = load_properties_for_catalog_path(catalog_csv_path)
+    if index > len(rows):
+        return ""
+    row_id = str(rows[index - 1].get("ID", "")).strip()
+    return row_id
+
+
 def property_ref_for_detail_enrich(
     *,
     current_user_text: str,
@@ -139,6 +169,7 @@ def property_ref_for_detail_enrich(
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
     fallback_ref: str = "",
+    catalog_csv_path: str | None = None,
 ) -> str:
     """Referencia desde mensaje actual, respuesta del bot o historial (elección de propiedad)."""
     blobs: list[str] = []
@@ -159,12 +190,17 @@ def property_ref_for_detail_enrich(
         )
         if ref.strip():
             return ref.strip()
+        opt_ref = _property_ref_from_option_number(blob, catalog_csv_path)
+        if opt_ref:
+            return opt_ref
 
-    if (
+    active_context = (
         user_requests_property_detail(current_user_text)
         or user_showed_property_interest(current_user_text)
         or bot_promises_visual_material(outbound_message)
-    ):
+        or user_requests_property_detail(outbound_message)
+    )
+    if active_context:
         ref_hist = extract_property_ref(
             "",
             flow_path=flow_path,
@@ -176,6 +212,23 @@ def property_ref_for_detail_enrich(
         )
         if ref_hist.strip():
             return ref_hist.strip()
+        for turn in reversed(history or []):
+            if turn.role != "user":
+                continue
+            ref_turn = extract_property_ref(
+                "",
+                flow_path=flow_path,
+                catalog_sale_path=catalog_sale_path,
+                catalog_rent_path=catalog_rent_path,
+                history=[],
+                current_user_text=turn.content,
+                user_only=True,
+            )
+            if ref_turn.strip():
+                return ref_turn.strip()
+            opt_ref = _property_ref_from_option_number(turn.content, catalog_csv_path)
+            if opt_ref:
+                return opt_ref
 
     return (fallback_ref or "").strip()
 
@@ -291,18 +344,30 @@ def enrich_detail_media_from_catalog(
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
         fallback_ref=property_ref,
+        catalog_csv_path=catalog_csv_path,
     )
     if not ref:
-        return strip_property_media_from_message(body)
+        logger.warning(
+            "detail_media: sin ref de propiedad (user=%r); mensaje sin inyectar",
+            current_user_text[:80],
+        )
+        return body
 
     row = get_property_row_by_ref(catalog_csv_path, ref)
     if row is None:
+        logger.warning("detail_media: ref=%r sin fila en catálogo", ref)
         return body
 
     if not _message_has_characteristics_block(body):
         merged = _merge_detail_ficha(body, row)
         logger.info("detail_media: ficha enriquecida id=%s", row.get("ID"))
         return merged
+
+    if not message_offers_property_gallery(body):
+        media = build_detail_media_links_block(row)
+        if media.strip():
+            logger.info("detail_media: links inyectados id=%s", row.get("ID"))
+            return f"{body}\n\n{media}".strip()
 
     if message_offers_property_gallery(body) and not message_offers_property_video(body):
         video = property_video_url(row)
@@ -349,6 +414,7 @@ async def try_deliver_single_property_visual(
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
         fallback_ref=property_ref,
+        catalog_csv_path=catalog_csv_path,
     )
     if not ref:
         return None
@@ -357,47 +423,62 @@ async def try_deliver_single_property_visual(
     if row is None:
         return None
 
-    photo = primary_photo_url(row)
-    if not is_public_https_image_url(photo):
-        return None
+    if not message_offers_property_gallery(body):
+        body = _merge_detail_ficha(body, row)
 
     intro_part = _split_detail_intro(body)
-    caption = build_property_ficha(row, include_media_links=False, option_index=None)
-    media_block = build_detail_media_links_block(row)
-
     _, tail_part = _split_after_visual_intro(body)
+    media_block = build_detail_media_links_block(row)
+    ficha_text = build_property_ficha(row, include_media_links=True, option_index=None)
+
     text_parts: list[str] = []
     if intro_part.strip():
         text_parts.append(intro_part.strip())
-    if tail_part.strip():
+    if tail_part.strip() and (
+        message_offers_property_gallery(tail_part) or message_offers_property_video(tail_part)
+    ):
         text_parts.append(tail_part.strip())
-    elif media_block.strip():
+    elif media_block.strip() and not message_offers_property_gallery(intro_part):
         text_parts.append(media_block.strip())
-    else:
-        if media_block.strip():
-            text_parts.append(media_block.strip())
+    elif not message_offers_property_gallery("\n\n".join(text_parts)):
+        text_parts.append(ficha_text)
     followup_text = "\n\n".join(text_parts)
 
-    await send_whatsapp_image_message(
-        access_token=access_token,
-        phone_number_id=phone_number_id,
-        to_wa_id=to_wa_id,
-        image_url=photo,
-        caption=caption,
-        graph_version=graph_version,
-    )
-    if followup_text.strip():
-        await send_whatsapp_text_message(
+    photo = primary_photo_url(row)
+    if is_public_https_image_url(photo):
+        caption = build_property_ficha(row, include_media_links=False, option_index=None)
+        await send_whatsapp_image_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
-            message=followup_text,
+            image_url=photo,
+            caption=caption,
             graph_version=graph_version,
         )
+        if followup_text.strip():
+            await send_whatsapp_text_message(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                to_wa_id=to_wa_id,
+                message=followup_text,
+                graph_version=graph_version,
+            )
+        consolidated = "\n\n".join(
+            p for p in (caption, followup_text) if p.strip()
+        )
+        logger.info("detail_media: imagen + texto id=%s", row.get("ID"))
+        return consolidated
 
-    consolidated_parts = [p for p in (caption, followup_text) if p.strip()]
-    logger.info("detail_media: imagen + texto enviados id=%s", row.get("ID"))
-    return "\n\n".join(consolidated_parts)
+    outbound_text = followup_text.strip() or ficha_text
+    await send_whatsapp_text_message(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        to_wa_id=to_wa_id,
+        message=outbound_text,
+        graph_version=graph_version,
+    )
+    logger.info("detail_media: solo texto con links id=%s", row.get("ID"))
+    return outbound_text
 
 
 def ensure_detail_includes_video(

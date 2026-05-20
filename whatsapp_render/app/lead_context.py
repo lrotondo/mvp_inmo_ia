@@ -206,6 +206,17 @@ def user_declined_zone_preference(user_messages_text: str) -> bool:
     return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
 
 
+_STREET_AL_RE = re.compile(r"\s+al\s+", re.I)
+
+
+def _normalize_property_match_text(text: str) -> str:
+    """Unifica 'Arana al 200' con 'Arana 200' para matching en catálogo."""
+    t = (text or "").lower().strip()
+    t = _STREET_AL_RE.sub(" ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
 def extract_property_ref(
     conversation_text: str,
     *,
@@ -223,12 +234,15 @@ def extract_property_ref(
     else:
         blob = conversation_text.lower()
 
+    blob_norm = _normalize_property_match_text(blob)
     skip_barrio = user_declined_zone_preference(blob)
     best = ""
     best_len = 0
 
+    from app.catalog import iter_rows_for_property_matching
+
     for csv_path in catalog_paths_for_flow(flow_path, catalog_sale_path, catalog_rent_path):
-        for row in load_properties_for_catalog_path(csv_path):
+        for row in iter_rows_for_property_matching(csv_path):
             candidates: list[str] = []
             row_id = str(row.get("ID", "")).strip()
             direccion = str(row.get("Direccion", "")).strip()
@@ -242,8 +256,8 @@ def extract_property_ref(
                 candidates.append(barrio)
 
             for cand in candidates:
-                key = cand.lower()
-                if len(key) < 4 or key not in blob:
+                key = _normalize_property_match_text(cand)
+                if len(key) < 4 or key not in blob_norm:
                     continue
                 if len(key) > best_len:
                     best = cand
