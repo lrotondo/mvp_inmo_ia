@@ -56,11 +56,8 @@ El catálogo ya incluye **solo** propiedades con `Disponible=si`. Cada propiedad
 
 Reglas generales:
 - Usá **solo** URLs del catálogo. **Prohibido** inventar links.
-- **Prohibido** pegar la URL cruda en el mensaje. Usá siempre el formato markdown:
-  `[📸 Ver galería de fotos](URL)` o `[🎥 Ver video](URL)`.
-- El sistema convierte cada link markdown en un **botón** de WhatsApp (el cliente no ve la URL).
-- Emojis dentro del texto del botón (ej. `📸 Ver galería`). Máximo 2 emojis por bloque de media.
-- Una frase corta y cálida **antes** de cada link; el markdown en **línea aparte** debajo.
+- Emojis **dentro** del texto del markdown (WhatsApp los muestra en el botón). Máximo 2 emojis por bloque de media.
+- Una frase corta y cálida **antes** del enlace; el link en **línea aparte** debajo de cada opción.
 
 ### Al listar opciones (hasta 3) — fotos automáticas (CRÍTICO)
 El sistema envía **una imagen por propiedad** con la descripción debajo (`foto_principal` del catálogo).

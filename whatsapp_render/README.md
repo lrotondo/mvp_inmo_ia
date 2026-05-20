@@ -38,7 +38,6 @@ Servicio para responder WhatsApp con un solo backend:
 | `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 | `LISTING_IMAGE_DELIVERY` | no | Default `true`; `false` = listados en un solo mensaje de texto |
-| `FRIENDLY_CTA_LINKS` | no | Default `true`; convierte `[texto](url)` en botones CTA sin mostrar la URL |
 
 ## Modelo `tenants` (Postgres)
 
@@ -220,7 +219,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ### Enlaces de fotos y video (WhatsApp)
 
-- En **detalle** y pedidos puntuales, el LLM escribe `[📸 Ver galería de fotos](url)` y `[🎥 Ver video](url)`; [`friendly_links.py`](app/friendly_links.py) los envía como **botones CTA** (la URL no se muestra en el chat).
+- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji en **detalle** y pedidos puntuales: `[📸 Ver galería de fotos]`, `[🎥 Ver video]`, `[🔄 Tour 360°]`.
 - En **listados** (hasta 3 opciones): el LLM incluye el tag `[LISTADO:id1,id2,id3]` (IDs del catálogo). El backend ([`app/listing_delivery.py`](app/listing_delivery.py)) envía:
   1. Texto de introducción
   2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)

@@ -89,18 +89,15 @@ async def send_whatsapp_text_message(
     to_wa_id: str,
     message: str,
     graph_version: str | None = None,
-    preview_url: bool | None = None,
 ) -> None:
     body = message.strip() or "No pude generar una respuesta en este momento."
-    if preview_url is None:
-        preview_url = bool(_URL_IN_TEXT.search(body))
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": to_wa_id,
         "type": "text",
         "text": {
-            "preview_url": preview_url,
+            "preview_url": bool(_URL_IN_TEXT.search(body)),
             "body": body,
         },
     }
@@ -146,60 +143,4 @@ async def send_whatsapp_image_message(
         payload=payload,
         graph_version=graph_version,
         log_label=f"image cap_len={len(cap)}",
-    )
-
-
-def _truncate_cta_display_text(label: str, *, max_len: int = 20) -> str:
-    text = (label or "").strip() or "Abrir enlace"
-    if len(text) <= max_len:
-        return text
-    return text[:max_len]
-
-
-async def send_whatsapp_cta_url_message(
-    *,
-    access_token: str,
-    phone_number_id: str,
-    to_wa_id: str,
-    body: str,
-    button_label: str,
-    url: str,
-    footer: str | None = None,
-    graph_version: str | None = None,
-) -> None:
-    """Botón CTA: el cliente ve solo el texto del botón, no la URL."""
-    link = (url or "").strip()
-    if not link.lower().startswith("https://"):
-        raise ValueError(f"CTA url debe ser HTTPS: {link[:80]!r}")
-
-    body_text = (body or "").strip() or "Tocá el botón para abrir:"
-    interactive: dict = {
-        "type": "cta_url",
-        "body": {"text": body_text[:1024]},
-        "action": {
-            "name": "cta_url",
-            "parameters": {
-                "display_text": _truncate_cta_display_text(button_label),
-                "url": link,
-            },
-        },
-    }
-    foot = (footer or "").strip()
-    if foot:
-        interactive["footer"] = {"text": foot[:60]}
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": to_wa_id,
-        "type": "interactive",
-        "interactive": interactive,
-    }
-    await _post_whatsapp_payload(
-        access_token=access_token,
-        phone_number_id=phone_number_id,
-        to_wa_id=to_wa_id,
-        payload=payload,
-        graph_version=graph_version,
-        log_label=f"cta_url btn={button_label[:20]!r}",
     )
