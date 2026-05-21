@@ -17,6 +17,7 @@ from app.lead_context import extract_property_ref
 from app.property_ficha import (
     build_detail_delivery_caption,
     build_detail_media_links_block,
+    collect_media_link_buttons,
 )
 from app.session_state import user_wants_fresh_start
 
@@ -92,8 +93,9 @@ def test_enrich_injects_links_when_bot_promises_gallery() -> None:
                 HistoryTurn(role="user", content="info del arana 200"),
             ],
         )
-    assert "Ver galería" in out or "Fotos" in out
+    assert "material visual" in out.lower() or "galería" in out.lower()
     assert "Características" in out
+    assert "http" not in out
 
 
 def test_user_requests_fotos_detected() -> None:
@@ -123,7 +125,9 @@ def test_build_detail_delivery_caption_avoids_duplicate_header() -> None:
     caption = build_detail_delivery_caption(row, intro=intro, include_media_links=True)
     assert "Buenísima elección" in caption
     assert "Características" in caption
-    assert "galería" in caption.lower() or "Fotos" in caption
+    buttons = collect_media_link_buttons(row)
+    assert buttons
+    assert any("foto" in b.label.lower() for b in buttons)
     assert caption.count("Sarmiento y Alem, Centro") == 0
 
 
@@ -133,8 +137,7 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
     enriched = (
         "Disculpá.\n\n"
         "*Características:*\n• Patio\n"
-        "¡Genial! Te dejo la galería completa 👇\n"
-        "[📸 Ver galería de fotos](https://example.com/g)\n\n"
+        "¡Genial! Te dejo la galería completa 👇\n\n"
         "¿Qué te parece?"
     )
 
@@ -148,6 +151,10 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
                 "app.detail_media.send_whatsapp_image_message",
                 new_callable=AsyncMock,
             ) as mock_img,
+            patch(
+                "app.detail_media.send_whatsapp_cta_url_message",
+                new_callable=AsyncMock,
+            ) as mock_cta,
             patch(
                 "app.detail_media.send_whatsapp_text_message",
                 new_callable=AsyncMock,
@@ -169,20 +176,32 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
                 property_ref="5",
             )
             assert result is not None
-            assert "galería" in result.lower() or "Ver" in result
+            assert "Material visual" in result or "Ver fotos" in result
             assert mock_img.await_count == 1
+            assert mock_cta.await_count >= 1
             assert mock_txt.await_count == 0
+            assert "https://" not in mock_img.await_args.kwargs.get("caption", "")
 
     asyncio.run(_run())
 
 
-def test_build_detail_media_links_uses_primary_photo() -> None:
-    block = build_detail_media_links_block(FAKE_ROW)
-    assert "Fotos" in block
-    assert "unsplash" in block
+def test_collect_media_link_buttons_uses_primary_photo() -> None:
+    row = {
+        **FAKE_ROW,
+        "url_link_video": "https://example.com/v",
+    }
+    buttons = collect_media_link_buttons(row)
+    labels = [b.label for b in buttons]
+    urls = [b.url for b in buttons]
+    assert any("foto" in label.lower() for label in labels)
+    assert any("unsplash" in url for url in urls)
+    assert any("video" in label.lower() for label in labels)
+    block = build_detail_media_links_block(row)
+    assert "material visual" in block.lower()
+    assert "http" not in block
 
 
-def test_try_deliver_single_image_no_followup_text() -> None:
+def test_try_deliver_single_image_with_cta_buttons() -> None:
     from app.detail_media import try_deliver_single_property_visual
 
     async def _run() -> None:
@@ -195,6 +214,10 @@ def test_try_deliver_single_image_no_followup_text() -> None:
                 "app.detail_media.send_whatsapp_image_message",
                 new_callable=AsyncMock,
             ) as mock_img,
+            patch(
+                "app.detail_media.send_whatsapp_cta_url_message",
+                new_callable=AsyncMock,
+            ) as mock_cta,
             patch(
                 "app.detail_media.send_whatsapp_text_message",
                 new_callable=AsyncMock,
@@ -218,9 +241,11 @@ def test_try_deliver_single_image_no_followup_text() -> None:
             )
             assert result is not None
             assert mock_img.await_count == 1
+            assert mock_cta.await_count >= 1
             assert mock_txt.await_count == 0
             caption = mock_img.await_args.kwargs.get("caption", "")
             assert "Arana" in caption or "arana" in caption.lower()
             assert "¿Te gustaría visitarla?" in caption
+            assert "https://" not in caption
 
     asyncio.run(_run())

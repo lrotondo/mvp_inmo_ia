@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.catalog import (
@@ -96,16 +97,28 @@ def build_property_header_lines(
     return lines
 
 
-def build_detail_media_links_block(
+_CTA_LABEL_MAX = 20
+
+
+@dataclass(frozen=True)
+class MediaLinkButton:
+    label: str
+    url: str
+
+
+def _cta_label(text: str) -> str:
+    return text.strip()[:_CTA_LABEL_MAX]
+
+
+def _resolve_media_urls(
     row: dict[str, Any],
     *,
     prefer_primary_preview: bool = True,
-) -> str:
+) -> tuple[str, str, str, str]:
+    """photo_link, external_gallery, video, tour."""
     primary = primary_photo_url(row)
     gallery = gallery_photo_url(row)
     video = property_video_url(row)
-    lines: list[str] = []
-
     photo_link = ""
     external_gallery = ""
 
@@ -132,35 +145,74 @@ def build_detail_media_links_block(
         if fotos:
             photo_link = fotos
 
-    if photo_link and video:
-        lines.append("Acá tenés todo el material visual de esta propiedad 👇")
-        lines.append(f"[📸 Foto]({photo_link})")
-        lines.append(f"[🎥 Video]({video})")
-    elif photo_link:
-        lines.append("¡Genial! Te dejo la galería completa 👇")
-        lines.append(f"[📸 Fotos]({photo_link})")
-    elif video:
-        lines.append("Te comparto el video de la propiedad 👇")
-        lines.append(f"[🎥 Video]({video})")
+    return photo_link, external_gallery, video, tour_360_url(row)
 
+
+def collect_media_link_buttons(
+    row: dict[str, Any],
+    *,
+    prefer_primary_preview: bool = True,
+) -> list[MediaLinkButton]:
+    """Enlaces para botones CTA de WhatsApp (URL oculta en el botón)."""
+    photo_link, external_gallery, video, tour = _resolve_media_urls(
+        row, prefer_primary_preview=prefer_primary_preview
+    )
+    buttons: list[MediaLinkButton] = []
+
+    if photo_link:
+        buttons.append(MediaLinkButton(_cta_label("📸 Ver fotos"), photo_link))
+    if video:
+        buttons.append(MediaLinkButton(_cta_label("🎥 Ver video"), video))
     if external_gallery:
         label = (
-            "[📱 Ver galería en Instagram]({url})"
+            "📱 Ver Instagram"
             if "instagram" in external_gallery.lower()
-            else "[📱 Ver galería completa]({url})"
+            else "📱 Ver galería"
         )
-        lines.append(label.format(url=external_gallery))
+        buttons.append(MediaLinkButton(_cta_label(label), external_gallery))
+    if tour:
+        buttons.append(MediaLinkButton(_cta_label("🔄 Tour 360°"), tour))
 
-    tour = tour_360_url(row)
-    if tour and not lines:
-        lines.append("🔄 Recorré la propiedad en 360° 👇")
-        lines.append(f"[🔄 Tour 360°]({tour})")
-    elif tour and lines:
-        lines.append(f"[🔄 Tour 360°]({tour})")
+    return buttons
 
-    if not lines:
+
+def build_detail_media_intro(
+    row: dict[str, Any],
+    *,
+    prefer_primary_preview: bool = True,
+) -> str:
+    """Frase corta previa a los botones CTA (sin URLs en el texto)."""
+    photo_link, external_gallery, video, tour = _resolve_media_urls(
+        row, prefer_primary_preview=prefer_primary_preview
+    )
+    has_photo = bool(photo_link or external_gallery)
+    if has_photo and video:
+        return "Acá tenés todo el material visual de esta propiedad 👇"
+    if has_photo:
+        return "¡Genial! Te dejo la galería completa 👇"
+    if video:
+        return "Te comparto el video de la propiedad 👇"
+    if tour:
+        return "🔄 Recorré la propiedad en 360° 👇"
+    return ""
+
+
+def format_media_buttons_for_history(buttons: list[MediaLinkButton]) -> str:
+    if not buttons:
         return ""
+    lines = ["Material visual:"]
+    for btn in buttons:
+        lines.append(f"• {btn.label}")
     return "\n".join(lines)
+
+
+def build_detail_media_links_block(
+    row: dict[str, Any],
+    *,
+    prefer_primary_preview: bool = True,
+) -> str:
+    """Solo intro; los links van en botones CTA al enviar por WhatsApp."""
+    return build_detail_media_intro(row, prefer_primary_preview=prefer_primary_preview)
 
 
 def text_mentions_row_header(text: str, row: dict[str, Any]) -> bool:
@@ -183,6 +235,79 @@ def text_mentions_row_header(text: str, row: dict[str, Any]) -> bool:
     return False
 
 
+_CORRECTION_INTRO_RE = re.compile(
+    r"disculp|me confund|vamos de nuevo|informaci[oó]n correcta|de nuevo con",
+    re.I,
+)
+_CLOSING_QUESTION_RE = re.compile(r"\?\s*$|¿.+", re.M)
+
+
+def intro_conflicts_with_catalog_row(
+    intro: str,
+    row: dict[str, Any],
+    catalog_csv_path: str | None,
+) -> bool:
+    """True si el intro describe otra fila del catálogo, no la resuelta."""
+    if text_mentions_row_header(intro, row):
+        return False
+    intro_norm = (intro or "").lower()
+    if not intro_norm.strip():
+        return False
+
+    from app.catalog import iter_rows_for_property_matching
+
+    row_id = str(row.get("ID", "")).strip()
+    for other in iter_rows_for_property_matching(catalog_csv_path):
+        if str(other.get("ID", "")).strip() == row_id:
+            continue
+        for field in ("Titulo", "Direccion"):
+            val = str(other.get(field, "")).strip().lower()
+            if len(val) >= 8 and val in intro_norm:
+                return True
+    return False
+
+
+def sanitize_detail_intro_for_row(
+    intro: str,
+    row: dict[str, Any],
+    catalog_csv_path: str | None = None,
+) -> str:
+    """
+    Quita del intro del LLM descripciones de otra propiedad; conserva disculpas y preguntas.
+    """
+    intro_clean = _dedupe_consecutive_lines((intro or "").strip())
+    if not intro_clean:
+        return ""
+
+    if not intro_conflicts_with_catalog_row(intro_clean, row, catalog_csv_path):
+        return intro_clean
+
+    kept: list[str] = []
+    for block in re.split(r"\n\s*\n", intro_clean):
+        part = block.strip()
+        if not part:
+            continue
+        if text_mentions_row_header(part, row):
+            kept.append(part)
+            continue
+        if _CORRECTION_INTRO_RE.search(part):
+            kept.append(part)
+            continue
+        if _CLOSING_QUESTION_RE.search(part):
+            kept.append(part)
+            continue
+
+    if kept:
+        return "\n\n".join(kept)
+
+    titulo = str(row.get("Titulo", "")).strip()
+    direccion = str(row.get("Direccion", "")).strip()
+    headline = titulo or direccion
+    if headline:
+        return f"Te cuento sobre *{headline}* 👇"
+    return "Te comparto la información de esta propiedad 👇"
+
+
 def _dedupe_consecutive_lines(text: str) -> str:
     lines = text.splitlines()
     kept: list[str] = []
@@ -203,13 +328,14 @@ def build_detail_delivery_caption(
     tail: str = "",
     include_media_links: bool = True,
     caption_max_chars: int = 1024,
+    catalog_csv_path: str | None = None,
 ) -> str:
     """
     Un solo bloque para detalle de propiedad: comentario del bot + datos del catálogo
     sin repetir encabezado si el intro ya los menciona.
     """
     parts: list[str] = []
-    intro_clean = _dedupe_consecutive_lines((intro or "").strip())
+    intro_clean = sanitize_detail_intro_for_row(intro, row, catalog_csv_path)
     if intro_clean:
         parts.append(intro_clean)
 
@@ -226,9 +352,9 @@ def build_detail_delivery_caption(
     if include_media_links:
         body_so_far = "\n\n".join(parts)
         if not _GALERIA_LINK_RE.search(body_so_far):
-            media = build_detail_media_links_block(row)
-            if media:
-                parts.append(media)
+            intro = build_detail_media_intro(row)
+            if intro:
+                parts.append(intro)
 
     if (tail or "").strip():
         parts.append(tail.strip())

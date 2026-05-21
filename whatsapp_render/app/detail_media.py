@@ -11,17 +11,21 @@ from app.catalog import (
     property_video_url,
 )
 from app.lead_context import extract_property_ref
-from app.media_urls import detail_image_url, preview_link_for_text
+from app.media_urls import detail_image_url
 from app.meta_client import (
     is_public_https_image_url,
+    send_whatsapp_cta_url_message,
     send_whatsapp_image_message,
     send_whatsapp_text_message,
 )
 from app.property_ficha import (
     build_detail_delivery_caption,
+    build_detail_media_intro,
     build_detail_media_links_block,
     build_property_ficha,
+    collect_media_link_buttons,
     format_caracteristicas_text,
+    format_media_buttons_for_history,
 )
 from app.session_state import user_wants_fresh_start
 
@@ -178,28 +182,29 @@ def property_ref_for_detail_enrich(
     fallback_ref: str = "",
     catalog_csv_path: str | None = None,
 ) -> str:
-    """Referencia desde mensaje actual, respuesta del bot o historial (elección de propiedad)."""
-    blobs: list[str] = []
-    for part in (current_user_text, outbound_message):
-        p = (part or "").strip()
-        if p and p not in blobs:
-            blobs.append(p)
+    """Referencia desde mensaje del usuario (prioridad), historial o fallback."""
+    ref_user = extract_property_ref(
+        "",
+        flow_path=flow_path,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+        history=[],
+        current_user_text=current_user_text,
+        user_only=True,
+    )
+    if ref_user.strip():
+        return ref_user.strip()
 
-    for blob in blobs:
-        ref = extract_property_ref(
-            "",
-            flow_path=flow_path,
-            catalog_sale_path=catalog_sale_path,
-            catalog_rent_path=catalog_rent_path,
-            history=[],
-            current_user_text=blob,
-            user_only=True,
-        )
-        if ref.strip():
-            return ref.strip()
-        opt_ref = _property_ref_from_option_number(blob, catalog_csv_path)
-        if opt_ref:
-            return opt_ref
+    opt_ref = _property_ref_from_option_number(current_user_text, catalog_csv_path)
+    if opt_ref:
+        return opt_ref
+
+    if (fallback_ref or "").strip():
+        return fallback_ref.strip()
+
+    opt_out = _property_ref_from_option_number(outbound_message, catalog_csv_path)
+    if opt_out:
+        return opt_out
 
     active_context = (
         user_requests_property_detail(current_user_text)
@@ -237,7 +242,7 @@ def property_ref_for_detail_enrich(
             if opt_ref:
                 return opt_ref
 
-    return (fallback_ref or "").strip()
+    return ""
 
 
 def strip_property_media_from_message(text: str) -> str:
@@ -392,11 +397,37 @@ def enrich_detail_media_from_catalog(
     if message_offers_property_gallery(body) and not message_offers_property_video(body):
         video = property_video_url(row)
         if video:
-            return (
-                f"{body}\n\nTe dejo también el video 👇\n[🎥 Video]({video})"
-            ).strip()
+            return f"{body}\n\nTe dejo también el video 👇".strip()
 
     return body
+
+
+async def _deliver_property_media_ctas(
+    *,
+    access_token: str,
+    phone_number_id: str,
+    to_wa_id: str,
+    row: dict[str, Any],
+    graph_version: str | None = None,
+) -> str:
+    """Envía botones CTA (URL oculta). Retorna texto para historial."""
+    buttons = collect_media_link_buttons(row)
+    if not buttons:
+        return ""
+
+    intro = build_detail_media_intro(row)
+    for index, btn in enumerate(buttons):
+        body = intro if index == 0 else "👇"
+        await send_whatsapp_cta_url_message(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to_wa_id=to_wa_id,
+            body_text=body,
+            button_label=btn.label,
+            url=btn.url,
+            graph_version=graph_version,
+        )
+    return format_media_buttons_for_history(buttons)
 
 
 async def try_deliver_single_property_visual(
@@ -452,7 +483,8 @@ async def try_deliver_single_property_visual(
         row,
         intro=intro_part,
         tail=tail_part,
-        include_media_links=True,
+        include_media_links=False,
+        catalog_csv_path=catalog_csv_path,
     )
 
     primary = primary_photo_url(row)
@@ -468,22 +500,35 @@ async def try_deliver_single_property_visual(
             caption=unified,
             graph_version=graph_version,
         )
-        logger.info("detail_media: imagen unificada id=%s", row.get("ID"))
-        return unified
+        cta_history = await _deliver_property_media_ctas(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to_wa_id=to_wa_id,
+            row=row,
+            graph_version=graph_version,
+        )
+        consolidated = "\n\n".join(p for p in (unified, cta_history) if p.strip())
+        logger.info("detail_media: imagen + botones CTA id=%s", row.get("ID"))
+        return consolidated
 
-    outbound_text = unified
-    preview_link = preview_link_for_text(primary, gallery)
-    enable_preview = bool(preview_link)
     await send_whatsapp_text_message(
         access_token=access_token,
         phone_number_id=phone_number_id,
         to_wa_id=to_wa_id,
-        message=outbound_text,
+        message=unified,
         graph_version=graph_version,
-        preview_url=enable_preview,
+        preview_url=False,
     )
-    logger.info("detail_media: solo texto con links id=%s", row.get("ID"))
-    return outbound_text
+    cta_history = await _deliver_property_media_ctas(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        to_wa_id=to_wa_id,
+        row=row,
+        graph_version=graph_version,
+    )
+    consolidated = "\n\n".join(p for p in (unified, cta_history) if p.strip())
+    logger.info("detail_media: texto + botones CTA id=%s", row.get("ID"))
+    return consolidated
 
 
 def ensure_detail_includes_video(

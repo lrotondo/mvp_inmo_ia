@@ -217,30 +217,18 @@ def _normalize_property_match_text(text: str) -> str:
     return t
 
 
-def extract_property_ref(
-    conversation_text: str,
+def _property_ref_from_blob_norm(
+    blob_norm: str,
     *,
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
-    history: list[HistoryTurn] | None = None,
-    current_user_text: str = "",
-    user_only: bool = False,
+    skip_barrio: bool,
 ) -> str:
-    if user_only and history is not None:
-        blob = user_messages_for_flow(
-            history, current_user_text, flow_path
-        ).lower()
-    else:
-        blob = conversation_text.lower()
-
-    blob_norm = _normalize_property_match_text(blob)
-    skip_barrio = user_declined_zone_preference(blob)
-    best = ""
-    best_len = 0
-
     from app.catalog import iter_rows_for_property_matching
 
+    best = ""
+    best_len = 0
     for csv_path in catalog_paths_for_flow(flow_path, catalog_sale_path, catalog_rent_path):
         for row in iter_rows_for_property_matching(csv_path):
             candidates: list[str] = []
@@ -265,8 +253,47 @@ def extract_property_ref(
                 if len(key) > best_len:
                     best = cand
                     best_len = len(key)
-
     return best
+
+
+def extract_property_ref(
+    conversation_text: str,
+    *,
+    flow_path: str,
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+    history: list[HistoryTurn] | None = None,
+    current_user_text: str = "",
+    user_only: bool = False,
+) -> str:
+    current = (current_user_text or "").strip()
+    if current:
+        blob_norm = _normalize_property_match_text(current.lower())
+        skip_barrio = user_declined_zone_preference(blob_norm)
+        ref = _property_ref_from_blob_norm(
+            blob_norm,
+            flow_path=flow_path,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            skip_barrio=skip_barrio,
+        )
+        if ref:
+            return ref
+
+    if user_only and history is not None:
+        blob = user_messages_for_flow(history, current_user_text, flow_path).lower()
+    else:
+        blob = conversation_text.lower()
+
+    blob_norm = _normalize_property_match_text(blob)
+    skip_barrio = user_declined_zone_preference(blob)
+    return _property_ref_from_blob_norm(
+        blob_norm,
+        flow_path=flow_path,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+        skip_barrio=skip_barrio,
+    )
 
 
 def conversation_wants_visit(conversation_text: str) -> bool:

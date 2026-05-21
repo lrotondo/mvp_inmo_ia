@@ -70,12 +70,8 @@ def build_listing_caption(row: dict[str, Any], index: int) -> str:
 
 
 def build_listing_fallback_text(row: dict[str, Any], index: int) -> str:
-    """Texto cuando no hay imagen enviable."""
-    caption = build_listing_caption(row, index)
-    photo = primary_photo_url(row)
-    if photo:
-        return f"{caption}\n📸 [Foto]({photo})"
-    return caption
+    """Texto cuando no hay imagen enviable (sin URLs crudas en el cuerpo)."""
+    return build_listing_caption(row, index)
 
 
 def consolidate_history_text(

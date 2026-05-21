@@ -150,3 +150,50 @@ async def send_whatsapp_image_message(
         graph_version=graph_version,
         log_label=f"image cap_len={len(cap)}",
     )
+
+
+async def send_whatsapp_cta_url_message(
+    *,
+    access_token: str,
+    phone_number_id: str,
+    to_wa_id: str,
+    body_text: str,
+    button_label: str,
+    url: str,
+    graph_version: str | None = None,
+) -> None:
+    """
+    Botón con URL (WhatsApp no soporta markdown [texto](url) en el cuerpo).
+    display_text máx. 20 caracteres; la URL no se muestra en el mensaje.
+    """
+    body = (body_text or "👇").strip()[:1024]
+    label = (button_label or "Abrir enlace").strip()[:20]
+    link = (url or "").strip()
+    if not link.lower().startswith("https://"):
+        raise ValueError(f"CTA url invalida: {link[:80]!r}")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_wa_id,
+        "type": "interactive",
+        "interactive": {
+            "type": "cta_url",
+            "body": {"text": body},
+            "action": {
+                "name": "cta_url",
+                "parameters": {
+                    "display_text": label,
+                    "url": link,
+                },
+            },
+        },
+    }
+    await _post_whatsapp_payload(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        to_wa_id=to_wa_id,
+        payload=payload,
+        graph_version=graph_version,
+        log_label=f"cta_url label={label!r}",
+    )

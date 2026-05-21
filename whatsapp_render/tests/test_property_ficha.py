@@ -28,21 +28,23 @@ def test_build_property_ficha_includes_chars_and_media() -> None:
     ficha = build_property_ficha(row, include_media_links=True)
     assert "Av. Test" in ficha
     assert "Pileta" in ficha
-    assert "Foto" in ficha or "Fotos" in ficha
-    assert "Video" in ficha
+    assert "material visual" in ficha.lower()
+    assert "http" not in ficha
 
 
-def test_detail_media_links_primary_before_instagram() -> None:
+def test_media_buttons_primary_and_instagram() -> None:
+    from app.property_ficha import collect_media_link_buttons
+
     row = {
         "foto_principal": "https://images.wasi.co/inmuebles/photo.jpg",
         "url_link_fotos": "https://www.instagram.com/p/ABC123/",
     }
-    block = build_detail_media_links_block(row)
-    assert "Fotos](https://images.wasi.co" in block
-    assert "instagram.com/p/ABC123" in block
-    foto_idx = block.index("Fotos")
-    ig_idx = block.index("instagram.com")
-    assert foto_idx < ig_idx
+    buttons = collect_media_link_buttons(row)
+    urls = [b.url for b in buttons]
+    assert "images.wasi.co" in urls[0]
+    assert any("instagram.com" in u for u in urls)
+    assert build_detail_media_links_block(row)
+    assert "http" not in build_detail_media_links_block(row)
 
 
 def test_format_caracteristicas_strips_instagram_bullet() -> None:
