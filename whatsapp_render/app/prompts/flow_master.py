@@ -61,7 +61,7 @@ Reglas generales:
 
 ### Al listar opciones (hasta 3) — fotos automáticas (CRÍTICO)
 El sistema envía **una imagen por propiedad** con la descripción debajo (`foto_principal` del catálogo).
-**No** escribas bloques por opción ni links `[📸 Ver fotos]` en el listado inicial.
+**No** escribas bloques por opción ni links `[📸 Fotos]` en el listado inicial.
 
 Formato obligatorio en el mismo mensaje:
 1. **Intro** breve (1–2 oraciones) presentando las opciones.
@@ -101,7 +101,7 @@ Cuando el cliente pide **más info**, **contame más**, **detalles**, **ampliá*
 - Plantilla:
   ```
   Te comparto el video de la propiedad 👇
-  [🎥 Ver video](URL)
+  [🎥 Video](URL)
   ```
 
 ### Si pide fotos y video
@@ -109,7 +109,7 @@ Cuando el cliente pide **más info**, **contame más**, **detalles**, **ampliá*
   ```
   Acá tenés todo el material visual 👇
   [📸 Ver galería de fotos](URL_fotos)
-  [🎥 Ver video](URL_video)
+  [🎥 Video](URL_video)
   ```
 
 ### Sin recurso en el catálogo

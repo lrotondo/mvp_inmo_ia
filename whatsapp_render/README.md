@@ -216,7 +216,7 @@ Probar:
    | `ID` | sí | Identificador único de la fila |
    | `Direccion`, `Barrio`, `Precio`, `Ambientes`, `Caracteristicas` | sí | Datos mostrados al cliente |
    | `Disponible` | sí para publicar | Solo filas con `si`, `sí`, `1`, `true`, etc. aparecen en el bot. **Vacío u otro valor = oculta** |
-   | `foto_principal` | recomendada | Foto del resumen en listados (`[📸 Ver fotos]`) |
+   | `foto_principal` | recomendada | Foto del resumen en listados (`[📸 Ver foto]`) |
    | `Tour_360` | opcional | Tour en listados (`[🔄 Tour 360°]`) si está cargado |
    | `url_link_fotos` | opcional | Carrusel / galería en detalle o si piden fotos (`[📸 Ver galería de fotos]`) |
    | `url_link_video` | opcional | Video externo cuando piden video (`[🎥 Ver video]`) |

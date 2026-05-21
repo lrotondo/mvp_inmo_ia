@@ -375,7 +375,7 @@ def enrich_detail_media_from_catalog(
         video = property_video_url(row)
         if video:
             return (
-                f"{body}\n\nTe dejo también el video 👇\n[🎥 Ver video]({video})"
+                f"{body}\n\nTe dejo también el video 👇\n[🎥 Video]({video})"
             ).strip()
 
     return body

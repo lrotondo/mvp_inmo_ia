@@ -1,0 +1,6 @@
+python web_property_scraper.py "https://coworksolucionesinmobiliarias.com/s/casa/ventas?id_property_type=1&business_type%5B0%5D=for_sale" -o "whatsapp_render\data\tenants\inmobiliaria_cowork.csv" --max-pages 300 --delay 0.5
+
+
+curl -H "X-Admin-Secret: TU_SECRETO" \
+  "https://TU_SERVICIO/admin/waitlist/export.csv?phone_number_id=TU_PHONE_NUMBER_ID&days=7" \
+  -o waitlist_semana.csv

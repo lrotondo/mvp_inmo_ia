@@ -117,14 +117,14 @@ def build_detail_media_links_block(
 
     if photo_link and video:
         lines.append("Acá tenés todo el material visual de esta propiedad 👇")
-        lines.append(f"[📸 Ver fotos]({photo_link})")
-        lines.append(f"[🎥 Ver video]({video})")
+        lines.append(f"[📸 Foto]({photo_link})")
+        lines.append(f"[🎥 Video]({video})")
     elif photo_link:
         lines.append("¡Genial! Te dejo la galería completa 👇")
-        lines.append(f"[📸 Ver fotos]({photo_link})")
+        lines.append(f"[📸 Fotos]({photo_link})")
     elif video:
         lines.append("Te comparto el video de la propiedad 👇")
-        lines.append(f"[🎥 Ver video]({video})")
+        lines.append(f"[🎥 Video]({video})")
 
     if external_gallery:
         label = (

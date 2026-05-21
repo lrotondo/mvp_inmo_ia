@@ -28,8 +28,8 @@ def test_build_property_ficha_includes_chars_and_media() -> None:
     ficha = build_property_ficha(row, include_media_links=True)
     assert "Av. Test" in ficha
     assert "Pileta" in ficha
-    assert "Ver fotos" in ficha
-    assert "Ver video" in ficha
+    assert "Fotos" in ficha
+    assert "Video" in ficha
 
 
 def test_detail_media_links_primary_before_instagram() -> None:
@@ -38,9 +38,9 @@ def test_detail_media_links_primary_before_instagram() -> None:
         "url_link_fotos": "https://www.instagram.com/p/ABC123/",
     }
     block = build_detail_media_links_block(row)
-    assert "Ver fotos](https://images.wasi.co" in block
+    assert "Fotos](https://images.wasi.co" in block
     assert "instagram.com/p/ABC123" in block
-    foto_idx = block.index("Ver fotos")
+    foto_idx = block.index("Fotos")
     ig_idx = block.index("instagram.com")
     assert foto_idx < ig_idx
 

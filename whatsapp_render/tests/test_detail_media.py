@@ -89,7 +89,7 @@ def test_enrich_injects_links_when_bot_promises_gallery() -> None:
                 HistoryTurn(role="user", content="info del arana 200"),
             ],
         )
-    assert "Ver galería" in out or "Ver fotos" in out
+    assert "Ver galería" in out or "Fotos" in out
     assert "Características" in out
 
 
@@ -153,7 +153,7 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
 
 def test_build_detail_media_links_uses_primary_photo() -> None:
     block = build_detail_media_links_block(FAKE_ROW)
-    assert "Ver fotos" in block
+    assert "Fotos" in block
     assert "unsplash" in block
 
 

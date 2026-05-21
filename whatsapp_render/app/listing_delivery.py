@@ -74,7 +74,7 @@ def build_listing_fallback_text(row: dict[str, Any], index: int) -> str:
     caption = build_listing_caption(row, index)
     photo = primary_photo_url(row)
     if photo:
-        return f"{caption}\n📸 [Ver fotos]({photo})"
+        return f"{caption}\n📸 [Foto]({photo})"
     return caption
 
 
