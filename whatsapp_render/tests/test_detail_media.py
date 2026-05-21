@@ -14,7 +14,10 @@ from app.detail_media import (
     user_requests_property_detail,
 )
 from app.lead_context import extract_property_ref
-from app.property_ficha import build_detail_media_links_block
+from app.property_ficha import (
+    build_detail_delivery_caption,
+    build_detail_media_links_block,
+)
 from app.session_state import user_wants_fresh_start
 
 TENANT_RENT = "data/tenants/inmobiliaria_cowork_alquiler.csv"
@@ -103,6 +106,27 @@ def test_bot_promises_galeria_comparto() -> None:
     )
 
 
+def test_build_detail_delivery_caption_avoids_duplicate_header() -> None:
+    intro = (
+        "¡Buenísima elección! Es un piso amplio en *Sarmiento y Alem*.\n"
+        "El precio es de *$850.000 mensuales* con expensas de *$150.000*."
+    )
+    row = {
+        **FAKE_ROW,
+        "Direccion": "Sarmiento y Alem",
+        "Barrio": "Centro",
+        "Precio": "850000",
+        "Ambientes": "3 ambientes",
+        "Caracteristicas": "Living comedor | Dos cocheras",
+        "url_link_fotos": "https://example.com/galeria",
+    }
+    caption = build_detail_delivery_caption(row, intro=intro, include_media_links=True)
+    assert "Buenísima elección" in caption
+    assert "Características" in caption
+    assert "galería" in caption.lower() or "Fotos" in caption
+    assert caption.count("Sarmiento y Alem, Centro") == 0
+
+
 def test_try_deliver_sends_text_with_links_when_enriched() -> None:
     from app.detail_media import try_deliver_single_property_visual
 
@@ -146,7 +170,8 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
             )
             assert result is not None
             assert "galería" in result.lower() or "Ver" in result
-            assert mock_img.await_count + mock_txt.await_count >= 1
+            assert mock_img.await_count == 1
+            assert mock_txt.await_count == 0
 
     asyncio.run(_run())
 
@@ -157,7 +182,7 @@ def test_build_detail_media_links_uses_primary_photo() -> None:
     assert "unsplash" in block
 
 
-def test_try_deliver_followup_disables_link_preview() -> None:
+def test_try_deliver_single_image_no_followup_text() -> None:
     from app.detail_media import try_deliver_single_property_visual
 
     async def _run() -> None:
@@ -169,27 +194,33 @@ def test_try_deliver_followup_disables_link_preview() -> None:
             patch(
                 "app.detail_media.send_whatsapp_image_message",
                 new_callable=AsyncMock,
-            ),
+            ) as mock_img,
             patch(
                 "app.detail_media.send_whatsapp_text_message",
                 new_callable=AsyncMock,
             ) as mock_txt,
         ):
-            await try_deliver_single_property_visual(
+            result = await try_deliver_single_property_visual(
                 access_token="tok",
                 phone_number_id="pnid",
                 to_wa_id="54911",
-                message="Te paso el material visual 👇",
+                message=(
+                    "¡Genial! Te cuento más sobre la de Arana 200.\n\n"
+                    "¿Te gustaría visitarla?"
+                ),
                 catalog_csv_path=TENANT_RENT,
-                current_user_text="fotos de arana 200",
+                current_user_text="mas detalles de arana 200",
                 flow_path="alquiler",
                 history=[],
                 catalog_sale_path=None,
                 catalog_rent_path=TENANT_RENT,
                 property_ref="5",
             )
-            assert mock_txt.await_count >= 1
-            kwargs = mock_txt.await_args.kwargs
-            assert kwargs.get("preview_url") is False
+            assert result is not None
+            assert mock_img.await_count == 1
+            assert mock_txt.await_count == 0
+            caption = mock_img.await_args.kwargs.get("caption", "")
+            assert "Arana" in caption or "arana" in caption.lower()
+            assert "¿Te gustaría visitarla?" in caption
 
     asyncio.run(_run())

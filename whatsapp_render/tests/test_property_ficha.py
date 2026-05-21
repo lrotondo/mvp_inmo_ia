@@ -28,7 +28,7 @@ def test_build_property_ficha_includes_chars_and_media() -> None:
     ficha = build_property_ficha(row, include_media_links=True)
     assert "Av. Test" in ficha
     assert "Pileta" in ficha
-    assert "Fotos" in ficha
+    assert "Foto" in ficha or "Fotos" in ficha
     assert "Video" in ficha
 
 
@@ -51,6 +51,22 @@ def test_format_caracteristicas_strips_instagram_bullet() -> None:
     assert "Pileta" in text
     assert "Garage" in text
     assert "instagram" not in text.lower()
+
+
+def test_build_property_ficha_uses_titulo_and_dormitorios() -> None:
+    row = {
+        "Titulo": "Casa con pileta",
+        "Direccion": "Av. Test 100",
+        "Barrio": "Centro",
+        "Precio": "100000",
+        "Dormitorios": "3",
+        "Ambientes": "4 ambientes",
+        "Caracteristicas": "Pileta",
+    }
+    ficha = build_property_ficha(row, include_media_links=False)
+    assert "Casa con pileta" in ficha
+    assert "3 dormitorios" in ficha
+    assert "Av. Test 100" in ficha
 
 
 def test_build_listing_caption_style_without_media_links() -> None:

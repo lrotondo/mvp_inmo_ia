@@ -245,11 +245,14 @@ def extract_property_ref(
         for row in iter_rows_for_property_matching(csv_path):
             candidates: list[str] = []
             row_id = str(row.get("ID", "")).strip()
+            titulo = str(row.get("Titulo", "")).strip()
             direccion = str(row.get("Direccion", "")).strip()
             barrio = str(row.get("Barrio", "")).strip()
             if row_id:
                 candidates.append(row_id)
                 candidates.append(f"ID {row_id}")
+            if titulo:
+                candidates.append(titulo)
             if direccion:
                 candidates.append(direccion)
             if barrio and len(barrio) >= 5 and not skip_barrio:

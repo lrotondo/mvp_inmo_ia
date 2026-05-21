@@ -237,7 +237,7 @@ def get_property_row_by_ref(
     for row in _load_rows(catalog_ref):
         if not _row_available_for_id_lookup(row):
             continue
-        for field in ("Direccion", "Barrio"):
+        for field in ("Titulo", "Direccion", "Barrio"):
             val = str(row.get(field, "")).strip().lower()
             if len(val) < 4 or val not in ref_lower:
                 continue
@@ -271,12 +271,15 @@ def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
     for row in hits:
         media_part = _media_suffix_parts(row)
         lines.append(
-            "{ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
+            "{ID} | {Titulo} | {Direccion} | {Barrio} | {Precio} | "
+            "Dormitorios: {Dormitorios} | {Ambientes} | "
             "Caracteristicas: {Caracteristicas}{media_part}".format(
                 ID=row.get("ID", ""),
+                Titulo=row.get("Titulo", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
                 Precio=row.get("Precio", ""),
+                Dormitorios=row.get("Dormitorios", ""),
                 Ambientes=row.get("Ambientes", ""),
                 Caracteristicas=row.get("Caracteristicas", ""),
                 media_part=media_part,
@@ -289,12 +292,15 @@ def format_catalog(hits: List[Dict[str, Any]]) -> str:
     lines = []
     for row in hits:
         lines.append(
-            "ID {ID} | {Direccion} | {Barrio} | {Precio} | {Ambientes} | "
+            "ID {ID} | {Titulo} | {Direccion} | {Barrio} | {Precio} | "
+            "Dormitorios: {Dormitorios} | {Ambientes} | "
             "Caracteristicas: {Caracteristicas} | foto_principal: {foto_principal}".format(
                 ID=row.get("ID", ""),
+                Titulo=row.get("Titulo", ""),
                 Direccion=row.get("Direccion", ""),
                 Barrio=row.get("Barrio", ""),
                 Precio=row.get("Precio", ""),
+                Dormitorios=row.get("Dormitorios", ""),
                 Ambientes=row.get("Ambientes", ""),
                 Caracteristicas=row.get("Caracteristicas", ""),
                 foto_principal=primary_photo_url(row),
@@ -316,7 +322,7 @@ def get_cached_compact_catalog(
 def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
     terms: set[str] = set()
     for row in load_properties_for_catalog_path(catalog_csv_path):
-        for field in ("ID", "Direccion", "Barrio"):
+        for field in ("ID", "Titulo", "Direccion", "Barrio", "Dormitorios"):
             raw = str(row.get(field, "")).lower().strip()
             if not raw:
                 continue

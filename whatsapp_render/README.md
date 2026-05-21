@@ -209,11 +209,13 @@ Probar:
 
 1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados (orden flexible; aliases aceptados):
 
-   `ID | Direccion | Barrio | Precio | Ambientes | Caracteristicas | Disponible | foto_principal | Tour_360 | url_link_fotos | url_link_video`
+   `ID | Titulo | Direccion | Barrio | Precio | Dormitorios | Ambientes | Caracteristicas | Disponible | foto_principal | Tour_360 | url_link_fotos | url_link_video`
 
    | Columna | Obligatoria | Uso |
    |---------|-------------|-----|
    | `ID` | sí | Identificador único de la fila |
+   | `Titulo` | recomendada | Nombre comercial de la publicación (el agente lo usa para describir y matchear) |
+   | `Dormitorios` | recomendada | Cantidad de dormitorios (número); el agente filtra cuando el cliente pide N dormitorios |
    | `Direccion`, `Barrio`, `Precio`, `Ambientes`, `Caracteristicas` | sí | Datos mostrados al cliente |
    | `Disponible` | sí para publicar | Solo filas con `si`, `sí`, `1`, `true`, etc. aparecen en el bot. **Vacío u otro valor = oculta** |
    | `foto_principal` | recomendada | Foto del resumen en listados (`[📸 Ver foto]`) |
@@ -276,7 +278,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Catálogo y relevancia
 
 - Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
-- El bloque del **system prompt** usa formato **compacto** por fila: ID, dirección, barrio, precio, ambientes, características y URLs de media (`foto_principal`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
+- El bloque del **system prompt** usa formato **compacto** por fila: ID, título, dirección, barrio, precio, dormitorios, ambientes, características y URLs de media (`foto_principal`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
 - El LLM elige cuáles mencionar según la consulta (entre las filas ya filtradas por disponibilidad).
 

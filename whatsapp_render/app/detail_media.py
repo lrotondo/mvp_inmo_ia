@@ -17,7 +17,12 @@ from app.meta_client import (
     send_whatsapp_image_message,
     send_whatsapp_text_message,
 )
-from app.property_ficha import build_detail_media_links_block, build_property_ficha
+from app.property_ficha import (
+    build_detail_delivery_caption,
+    build_detail_media_links_block,
+    build_property_ficha,
+    format_caracteristicas_text,
+)
 from app.session_state import user_wants_fresh_start
 
 logger = logging.getLogger(__name__)
@@ -305,11 +310,24 @@ def _split_after_visual_intro(body: str) -> tuple[str, str]:
 
 
 def _merge_detail_ficha(message: str, row: dict[str, Any]) -> str:
+    """Añade características y links sin duplicar encabezado (precio/dirección)."""
     intro = _split_detail_intro(message)
-    ficha = build_property_ficha(row, include_media_links=True, option_index=None)
+    parts: list[str] = []
     if intro:
-        return f"{intro}\n\n{ficha}".strip()
-    return ficha
+        parts.append(intro)
+    chars = format_caracteristicas_text(
+        str(row.get("Caracteristicas", "")),
+        max_chars=600,
+    )
+    if chars and not _message_has_characteristics_block(intro):
+        parts.append(chars)
+    if not message_offers_property_gallery(message):
+        media = build_detail_media_links_block(row)
+        if media:
+            parts.append(media)
+    if parts:
+        return "\n\n".join(parts).strip()
+    return build_property_ficha(row, include_media_links=True, option_index=None)
 
 
 def enrich_detail_media_from_catalog(
@@ -430,52 +448,30 @@ async def try_deliver_single_property_visual(
 
     intro_part = _split_detail_intro(body)
     _, tail_part = _split_after_visual_intro(body)
-    media_block = build_detail_media_links_block(row)
-    ficha_text = build_property_ficha(row, include_media_links=True, option_index=None)
-
-    text_parts: list[str] = []
-    if intro_part.strip():
-        text_parts.append(intro_part.strip())
-    if tail_part.strip() and (
-        message_offers_property_gallery(tail_part) or message_offers_property_video(tail_part)
-    ):
-        text_parts.append(tail_part.strip())
-    elif media_block.strip() and not message_offers_property_gallery(intro_part):
-        text_parts.append(media_block.strip())
-    elif not message_offers_property_gallery("\n\n".join(text_parts)):
-        text_parts.append(ficha_text)
-    followup_text = "\n\n".join(text_parts)
+    unified = build_detail_delivery_caption(
+        row,
+        intro=intro_part,
+        tail=tail_part,
+        include_media_links=True,
+    )
 
     primary = primary_photo_url(row)
     gallery = gallery_photo_url(row)
     photo = detail_image_url(primary, gallery)
 
     if photo and is_public_https_image_url(photo):
-        caption = build_property_ficha(row, include_media_links=False, option_index=None)
         await send_whatsapp_image_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             image_url=photo,
-            caption=caption,
+            caption=unified,
             graph_version=graph_version,
         )
-        if followup_text.strip():
-            await send_whatsapp_text_message(
-                access_token=access_token,
-                phone_number_id=phone_number_id,
-                to_wa_id=to_wa_id,
-                message=followup_text,
-                graph_version=graph_version,
-                preview_url=False,
-            )
-        consolidated = "\n\n".join(
-            p for p in (caption, followup_text) if p.strip()
-        )
-        logger.info("detail_media: imagen + texto id=%s", row.get("ID"))
-        return consolidated
+        logger.info("detail_media: imagen unificada id=%s", row.get("ID"))
+        return unified
 
-    outbound_text = followup_text.strip() or ficha_text
+    outbound_text = unified
     preview_link = preview_link_for_text(primary, gallery)
     enable_preview = bool(preview_link)
     await send_whatsapp_text_message(

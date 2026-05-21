@@ -12,6 +12,10 @@ from app.media_urls import is_likely_direct_image_url, is_social_or_page_url
 
 _STRIP_BARE_URL_RE = re.compile(r"https?://\S+", re.I)
 _INSTAGRAM_IN_TEXT_RE = re.compile(r"instagram\.com", re.I)
+_GALERIA_LINK_RE = re.compile(
+    r"\[(?:📸\s*)?(?:Ver\s+)?(?:galería\s+de\s+fotos|fotos|Foto)\]",
+    re.I,
+)
 
 
 def tour_360_url(row: dict[str, Any]) -> str:
@@ -44,6 +48,7 @@ def build_property_header_lines(
     *,
     option_index: int | None = None,
 ) -> list[str]:
+    titulo = str(row.get("Titulo", "")).strip()
     direccion = str(row.get("Direccion", "")).strip()
     barrio = str(row.get("Barrio", "")).strip()
     ubicacion = direccion
@@ -51,20 +56,32 @@ def build_property_header_lines(
         ubicacion = f"{direccion}, {barrio}" if direccion else barrio
 
     precio = str(row.get("Precio", "")).strip()
+    dormitorios = str(row.get("Dormitorios", "")).strip()
     ambientes = str(row.get("Ambientes", "")).strip()
 
+    headline = titulo or ubicacion
     if option_index is not None:
-        title = f"*Opción {option_index} — {ubicacion}*" if ubicacion else f"*Opción {option_index}*"
-    elif ubicacion:
-        title = f"*{ubicacion}*"
+        if headline:
+            title = f"*Opción {option_index} — {headline}*"
+        else:
+            title = f"*Opción {option_index}*"
+    elif headline:
+        title = f"*{headline}*"
     else:
         title = ""
 
     detail_parts: list[str] = []
+    if titulo and ubicacion and ubicacion.lower() != titulo.lower():
+        detail_parts.append(ubicacion)
     if precio:
         detail_parts.append(
             f"Precio: ${precio}" if not precio.startswith("$") else f"Precio: {precio}"
         )
+    if dormitorios:
+        if "dormitorio" in dormitorios.lower():
+            detail_parts.append(dormitorios)
+        else:
+            detail_parts.append(f"{dormitorios} dormitorios")
     if ambientes:
         if "ambiente" in ambientes.lower():
             detail_parts.append(ambientes)
@@ -144,6 +161,82 @@ def build_detail_media_links_block(
     if not lines:
         return ""
     return "\n".join(lines)
+
+
+def text_mentions_row_header(text: str, row: dict[str, Any]) -> bool:
+    """True si el texto ya nombra precio, título o dirección de la fila."""
+    blob = (text or "").lower()
+    if not blob.strip():
+        return False
+
+    precio = str(row.get("Precio", "")).strip()
+    if precio:
+        precio_digits = re.sub(r"\D", "", precio)
+        text_digits = re.sub(r"\D", "", blob)
+        if precio_digits and len(precio_digits) >= 4 and precio_digits in text_digits:
+            return True
+
+    for field in ("Titulo", "Direccion", "Barrio"):
+        val = str(row.get(field, "")).strip().lower()
+        if len(val) >= 5 and val in blob:
+            return True
+    return False
+
+
+def _dedupe_consecutive_lines(text: str) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    prev_key = ""
+    for line in lines:
+        key = line.strip().lower()
+        if key and key == prev_key:
+            continue
+        kept.append(line)
+        prev_key = key
+    return "\n".join(kept).strip()
+
+
+def build_detail_delivery_caption(
+    row: dict[str, Any],
+    *,
+    intro: str = "",
+    tail: str = "",
+    include_media_links: bool = True,
+    caption_max_chars: int = 1024,
+) -> str:
+    """
+    Un solo bloque para detalle de propiedad: comentario del bot + datos del catálogo
+    sin repetir encabezado si el intro ya los menciona.
+    """
+    parts: list[str] = []
+    intro_clean = _dedupe_consecutive_lines((intro or "").strip())
+    if intro_clean:
+        parts.append(intro_clean)
+
+    if not text_mentions_row_header(intro_clean, row):
+        parts.extend(build_property_header_lines(row, option_index=None))
+
+    chars = format_caracteristicas_text(
+        str(row.get("Caracteristicas", "")),
+        max_chars=500 if include_media_links else 700,
+    )
+    if chars and not re.search(r"\*Características:\*", intro_clean, re.I):
+        parts.append(chars)
+
+    if include_media_links:
+        body_so_far = "\n\n".join(parts)
+        if not _GALERIA_LINK_RE.search(body_so_far):
+            media = build_detail_media_links_block(row)
+            if media:
+                parts.append(media)
+
+    if (tail or "").strip():
+        parts.append(tail.strip())
+
+    text = "\n\n".join(p for p in parts if p.strip())
+    if len(text) <= caption_max_chars:
+        return text
+    return text[: caption_max_chars - 3].rstrip() + "..."
 
 
 def build_property_ficha(

@@ -87,6 +87,21 @@ class TestMediaSuffixParts(unittest.TestCase):
 
 
 class TestFormatCatalogCompact(unittest.TestCase):
+    def test_compact_line_includes_titulo_and_dormitorios(self) -> None:
+        row = {
+            "ID": "9",
+            "Titulo": "Depto luminoso",
+            "Direccion": "Test 1",
+            "Barrio": "Centro",
+            "Precio": "100",
+            "Dormitorios": "2",
+            "Ambientes": "2 ambientes",
+            "Caracteristicas": "Luminoso",
+        }
+        text = format_catalog_compact([row])
+        self.assertIn("Depto luminoso", text)
+        self.assertIn("Dormitorios: 2", text)
+
     def test_compact_line_includes_galeria_and_video(self) -> None:
         row = {
             "ID": "9",
@@ -105,6 +120,14 @@ class TestFormatCatalogCompact(unittest.TestCase):
 
 
 class TestHeaderAliases(unittest.TestCase):
+    def test_titulo_and_dormitorios_headers(self) -> None:
+        rows = rows_from_csv_text(
+            "ID,Titulo,Direccion,Barrio,Precio,Dormitorios,Ambientes,Caracteristicas,disponible\n"
+            "1,Casa 3 dorm,Av. Test 1,Centro,100,3,3 ambientes,Luminoso,si\n"
+        )
+        self.assertEqual(rows[0]["Titulo"], "Casa 3 dorm")
+        self.assertEqual(rows[0]["Dormitorios"], "3")
+
     def test_foto_principal_header(self) -> None:
         rows = rows_from_csv_text(
             "ID,Direccion,Barrio,Precio,Ambientes,Caracteristicas,disponible,foto_principal\n"
