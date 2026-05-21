@@ -17,6 +17,14 @@ _GALERIA_LINK_RE = re.compile(
     r"\[(?:📸\s*)?(?:Ver\s+)?(?:galería\s+de\s+fotos|fotos|Foto)\]",
     re.I,
 )
+_MARKDOWN_LINK_RE = re.compile(
+    r"\[([^\]]+)\]\(\s*(https?://[^)\s]+)\s*\)",
+    re.I,
+)
+_MEDIA_INTRO_RE = re.compile(
+    r"material\s+visual|galer[ií]a\s+completa|te\s+paso\s+el\s+material",
+    re.I,
+)
 
 
 def tour_360_url(row: dict[str, Any]) -> str:
@@ -110,6 +118,36 @@ def _cta_label(text: str) -> str:
     return text.strip()[:_CTA_LABEL_MAX]
 
 
+def replace_markdown_links_with_labels(text: str) -> str:
+    """
+    [📸 Fotos](https://url-larga...) → 📸 Fotos (WhatsApp no renderiza markdown).
+    La URL real va en el botón CTA al enviar.
+    """
+
+    def _repl(match: re.Match[str]) -> str:
+        label = (match.group(1) or "").strip()
+        return label if label else "Ver enlace"
+
+    return _MARKDOWN_LINK_RE.sub(_repl, text or "")
+
+
+def friendly_cta_label_for_url(url: str, *, kind: str = "") -> str:
+    """Etiqueta corta con ícono para botón CTA (máx. 20 caracteres)."""
+    u = (url or "").lower()
+    k = (kind or "").lower()
+    if k == "video" or "instagram.com/reel" in u or "/reel/" in u:
+        return _cta_label("🎥 Video")
+    if k == "tour" or "tour" in k or "360" in k:
+        return _cta_label("🔄 Tour 360°")
+    if k == "instagram" or "instagram.com" in u:
+        return _cta_label("📱 Instagram")
+    if k in ("album", "gallery", "fotos"):
+        return _cta_label("📸 Fotos")
+    if k == "photo" or k == "preview":
+        return _cta_label("📸 Foto")
+    return _cta_label("📸 Fotos")
+
+
 def _resolve_media_urls(
     row: dict[str, Any],
     *,
@@ -152,26 +190,42 @@ def collect_media_link_buttons(
     row: dict[str, Any],
     *,
     prefer_primary_preview: bool = True,
+    include_preview_cta: bool = False,
 ) -> list[MediaLinkButton]:
-    """Enlaces para botones CTA de WhatsApp (URL oculta en el botón)."""
-    photo_link, external_gallery, video, tour = _resolve_media_urls(
-        row, prefer_primary_preview=prefer_primary_preview
-    )
+    """
+    Botones CTA: álbum (url_link_fotos), video, tour.
+    foto_principal va en mensaje imagen; no se duplica salvo include_preview_cta.
+    """
+    primary = primary_photo_url(row).strip()
+    gallery = gallery_photo_url(row).strip()
+    video = property_video_url(row).strip()
+    tour = tour_360_url(row).strip()
     buttons: list[MediaLinkButton] = []
 
-    if photo_link:
-        buttons.append(MediaLinkButton(_cta_label("📸 Ver fotos"), photo_link))
-    if video:
-        buttons.append(MediaLinkButton(_cta_label("🎥 Ver video"), video))
-    if external_gallery:
-        label = (
-            "📱 Ver Instagram"
-            if "instagram" in external_gallery.lower()
-            else "📱 Ver galería"
+    if include_preview_cta and primary:
+        buttons.append(
+            MediaLinkButton(friendly_cta_label_for_url(primary, kind="preview"), primary)
         )
-        buttons.append(MediaLinkButton(_cta_label(label), external_gallery))
+
+    if gallery and gallery != primary:
+        kind = "instagram" if "instagram" in gallery.lower() else "album"
+        buttons.append(
+            MediaLinkButton(friendly_cta_label_for_url(gallery, kind=kind), gallery)
+        )
+    elif gallery and not primary:
+        kind = "instagram" if "instagram" in gallery.lower() else "album"
+        buttons.append(
+            MediaLinkButton(friendly_cta_label_for_url(gallery, kind=kind), gallery)
+        )
+
+    if video:
+        buttons.append(
+            MediaLinkButton(friendly_cta_label_for_url(video, kind="video"), video)
+        )
     if tour:
-        buttons.append(MediaLinkButton(_cta_label("🔄 Tour 360°"), tour))
+        buttons.append(
+            MediaLinkButton(friendly_cta_label_for_url(tour, kind="tour"), tour)
+        )
 
     return buttons
 
@@ -182,13 +236,15 @@ def build_detail_media_intro(
     prefer_primary_preview: bool = True,
 ) -> str:
     """Frase corta previa a los botones CTA (sin URLs en el texto)."""
-    photo_link, external_gallery, video, tour = _resolve_media_urls(
-        row, prefer_primary_preview=prefer_primary_preview
-    )
-    has_photo = bool(photo_link or external_gallery)
-    if has_photo and video:
+    primary = primary_photo_url(row).strip()
+    gallery = gallery_photo_url(row).strip()
+    video = property_video_url(row).strip()
+    tour = tour_360_url(row).strip()
+    has_album = bool(gallery)
+    has_preview = bool(primary)
+    if (has_preview or has_album) and video:
         return "Acá tenés todo el material visual de esta propiedad 👇"
-    if has_photo:
+    if has_preview or has_album:
         return "¡Genial! Te dejo la galería completa 👇"
     if video:
         return "Te comparto el video de la propiedad 👇"
@@ -240,6 +296,15 @@ _CORRECTION_INTRO_RE = re.compile(
     re.I,
 )
 _CLOSING_QUESTION_RE = re.compile(r"\?\s*$|¿.+", re.M)
+_VISIT_OR_HANDOFF_RE = re.compile(
+    r"coordinar\s+una\s+visita|conocerla\s+en\s+persona|asesor\s+se\s+va\s+a\s+comunicar",
+    re.I,
+)
+_LLM_PROPERTY_ESSAY_RE = re.compile(
+    r"dormitorio|living\s+comedor|toilette|USD\s*[\d.,]+|precio\s+es\s+de|"
+    r"piscina|calefacci[oó]n|porcelanato|lote\s+de\s+\d+",
+    re.I,
+)
 
 
 def intro_conflicts_with_catalog_row(
@@ -265,6 +330,58 @@ def intro_conflicts_with_catalog_row(
             if len(val) >= 8 and val in intro_norm:
                 return True
     return False
+
+
+def compact_detail_intro_for_row(
+    intro: str,
+    row: dict[str, Any],
+    catalog_csv_path: str | None = None,
+) -> str:
+    """
+    Intro breve para la ficha: sin párrafos largos del LLM (datos vienen del catálogo).
+    """
+    intro_clean = sanitize_detail_intro_for_row(intro, row, catalog_csv_path)
+    if not intro_clean:
+        return ""
+
+    kept: list[str] = []
+    for block in re.split(r"\n\s*\n", intro_clean):
+        part = block.strip()
+        if not part:
+            continue
+        if _CLOSING_QUESTION_RE.search(part) or _VISIT_OR_HANDOFF_RE.search(part):
+            continue
+        if _MEDIA_INTRO_RE.search(part) or _GALERIA_LINK_RE.search(part):
+            continue
+        if _CORRECTION_INTRO_RE.search(part):
+            kept.append(part)
+            continue
+        if _LLM_PROPERTY_ESSAY_RE.search(part):
+            continue
+        if len(part) <= 160:
+            kept.append(part)
+
+    if kept:
+        return "\n\n".join(kept)
+
+    titulo = str(row.get("Titulo", "")).strip()
+    direccion = str(row.get("Direccion", "")).strip()
+    headline = titulo or direccion
+    if headline:
+        return f"¡Excelente elección! Te cuento sobre *{headline}*."
+    return "¡Excelente elección! Te cuento sobre esta propiedad."
+
+
+def extract_detail_tail(text: str) -> str:
+    """Preguntas de cierre / visita al final de la respuesta del bot."""
+    parts: list[str] = []
+    for block in re.split(r"\n\s*\n", (text or "").strip()):
+        part = block.strip()
+        if not part:
+            continue
+        if _CLOSING_QUESTION_RE.search(part) or _VISIT_OR_HANDOFF_RE.search(part):
+            parts.append(part)
+    return "\n\n".join(parts)
 
 
 def sanitize_detail_intro_for_row(
@@ -326,35 +443,27 @@ def build_detail_delivery_caption(
     *,
     intro: str = "",
     tail: str = "",
-    include_media_links: bool = True,
+    include_media_links: bool = False,
     caption_max_chars: int = 1024,
     catalog_csv_path: str | None = None,
 ) -> str:
     """
-    Un solo bloque para detalle de propiedad: comentario del bot + datos del catálogo
-    sin repetir encabezado si el intro ya los menciona.
+    Caption de detalle: intro corto + datos del catálogo + pregunta de cierre.
+    Fotos/video se envían aparte (imagen + botones CTA).
     """
     parts: list[str] = []
-    intro_clean = sanitize_detail_intro_for_row(intro, row, catalog_csv_path)
+    intro_clean = compact_detail_intro_for_row(intro, row, catalog_csv_path)
     if intro_clean:
         parts.append(intro_clean)
 
-    if not text_mentions_row_header(intro_clean, row):
-        parts.extend(build_property_header_lines(row, option_index=None))
+    parts.extend(build_property_header_lines(row, option_index=None))
 
     chars = format_caracteristicas_text(
         str(row.get("Caracteristicas", "")),
-        max_chars=500 if include_media_links else 700,
+        max_chars=700,
     )
-    if chars and not re.search(r"\*Características:\*", intro_clean, re.I):
+    if chars:
         parts.append(chars)
-
-    if include_media_links:
-        body_so_far = "\n\n".join(parts)
-        if not _GALERIA_LINK_RE.search(body_so_far):
-            intro = build_detail_media_intro(row)
-            if intro:
-                parts.append(intro)
 
     if (tail or "").strip():
         parts.append(tail.strip())

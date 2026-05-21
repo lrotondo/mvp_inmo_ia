@@ -284,7 +284,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ### Enlaces de fotos y video (WhatsApp)
 
-- El prompt ([`app/prompts/flow_master.py`](app/prompts/flow_master.py)) usa enlaces markdown con emoji en **detalle** y pedidos puntuales: `[📸 Ver galería de fotos]`, `[🎥 Ver video]`, `[🔄 Tour 360°]`.
+- En **detalle**, el backend envía botones CTA con etiquetas cortas (`📸 Fotos`, `🎥 Video`, etc.); la URL no se muestra en el texto.
 - En **listados** (hasta 3 opciones): el LLM incluye el tag `[LISTADO:id1,id2,id3]` (IDs del catálogo). El backend ([`app/listing_delivery.py`](app/listing_delivery.py)) envía:
   1. Texto de introducción
   2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)

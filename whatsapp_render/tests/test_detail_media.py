@@ -31,6 +31,8 @@ FAKE_ROW = {
     "Ambientes": "2",
     "Caracteristicas": "Planta baja | Patio con parilla",
     "foto_principal": "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800",
+    "url_link_fotos": "https://example.com/galeria",
+    "url_link_video": "https://example.com/video",
     "Link_Fotos": "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800",
 }
 
@@ -93,9 +95,8 @@ def test_enrich_injects_links_when_bot_promises_gallery() -> None:
                 HistoryTurn(role="user", content="info del arana 200"),
             ],
         )
-    assert "material visual" in out.lower() or "galería" in out.lower()
-    assert "Características" in out
     assert "http" not in out
+    assert "[📸" not in out
 
 
 def test_user_requests_fotos_detected() -> None:
@@ -122,13 +123,16 @@ def test_build_detail_delivery_caption_avoids_duplicate_header() -> None:
         "Caracteristicas": "Living comedor | Dos cocheras",
         "url_link_fotos": "https://example.com/galeria",
     }
-    caption = build_detail_delivery_caption(row, intro=intro, include_media_links=True)
-    assert "Buenísima elección" in caption
+    caption = build_detail_delivery_caption(row, intro=intro)
+    assert "Excelente" in caption or "Sarmiento" in caption
     assert "Características" in caption
     buttons = collect_media_link_buttons(row)
     assert buttons
-    assert any("foto" in b.label.lower() for b in buttons)
-    assert caption.count("Sarmiento y Alem, Centro") == 0
+    assert any(
+        "foto" in b.label.lower() or "instagram" in b.label.lower() for b in buttons
+    )
+    assert "Sarmiento y Alem" in caption
+    assert "850000" in caption or "850" in caption
 
 
 def test_try_deliver_sends_text_with_links_when_enriched() -> None:
@@ -176,7 +180,8 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
                 property_ref="5",
             )
             assert result is not None
-            assert "Material visual" in result or "Ver fotos" in result
+            assert "Arana" in result
+            assert "Material visual" in result or "álbum" in result.lower() or "Ver" in result
             assert mock_img.await_count == 1
             assert mock_cta.await_count >= 1
             assert mock_txt.await_count == 0
@@ -185,20 +190,23 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
     asyncio.run(_run())
 
 
-def test_collect_media_link_buttons_uses_primary_photo() -> None:
+def test_collect_media_link_buttons_album_and_video() -> None:
     row = {
         **FAKE_ROW,
+        "foto_principal": "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800",
+        "url_link_fotos": "https://www.instagram.com/p/ABC123/",
         "url_link_video": "https://example.com/v",
     }
     buttons = collect_media_link_buttons(row)
     labels = [b.label for b in buttons]
     urls = [b.url for b in buttons]
-    assert any("foto" in label.lower() for label in labels)
-    assert any("unsplash" in url for url in urls)
+    assert "📱 Instagram" in labels
+    assert any("instagram.com" in u for u in urls)
     assert any("video" in label.lower() for label in labels)
-    block = build_detail_media_links_block(row)
-    assert "material visual" in block.lower()
-    assert "http" not in block
+    assert not any(u.endswith("?w=800") for u in urls)
+
+    preview_cta = collect_media_link_buttons(row, include_preview_cta=True)
+    assert any("foto" in b.label.lower() for b in preview_cta)
 
 
 def test_try_deliver_single_image_with_cta_buttons() -> None:

@@ -21,11 +21,10 @@ from app.meta_client import (
 from app.property_ficha import (
     build_detail_delivery_caption,
     build_detail_media_intro,
-    build_detail_media_links_block,
-    build_property_ficha,
     collect_media_link_buttons,
-    format_caracteristicas_text,
+    extract_detail_tail,
     format_media_buttons_for_history,
+    replace_markdown_links_with_labels,
 )
 from app.session_state import user_wants_fresh_start
 
@@ -114,6 +113,27 @@ def bot_promises_visual_material(outbound_message: str) -> bool:
 
 def _message_has_characteristics_block(text: str) -> bool:
     return bool(re.search(r"\*Características:\*", text or "", re.I))
+
+
+def should_deliver_property_detail_ficha(
+    *,
+    flow_path: str,
+    property_ref: str,
+    row: dict[str, Any] | None,
+    outbound_message: str,
+    current_user_text: str,
+) -> bool:
+    """Hay fila de catálogo y contexto de detalle / propiedad elegida."""
+    path = (flow_path or "").strip().lower()
+    if path in ("nuevo", "captacion") or row is None:
+        return False
+    if (property_ref or "").strip():
+        return True
+    return should_enrich_property_detail(
+        outbound_message=outbound_message,
+        current_user_text=current_user_text,
+        flow_path=flow_path,
+    )
 
 
 def should_enrich_property_detail(
@@ -250,6 +270,8 @@ def strip_property_media_from_message(text: str) -> str:
     if not (text or "").strip():
         return text
 
+    text = replace_markdown_links_with_labels(text)
+    text = re.sub(r"https?://\S+", "", text)
     lines = text.splitlines()
     kept: list[str] = []
     for line in lines:
@@ -314,27 +336,6 @@ def _split_after_visual_intro(body: str) -> tuple[str, str]:
     return "\n".join(before).strip(), "\n".join(after).strip()
 
 
-def _merge_detail_ficha(message: str, row: dict[str, Any]) -> str:
-    """Añade características y links sin duplicar encabezado (precio/dirección)."""
-    intro = _split_detail_intro(message)
-    parts: list[str] = []
-    if intro:
-        parts.append(intro)
-    chars = format_caracteristicas_text(
-        str(row.get("Caracteristicas", "")),
-        max_chars=600,
-    )
-    if chars and not _message_has_characteristics_block(intro):
-        parts.append(chars)
-    if not message_offers_property_gallery(message):
-        media = build_detail_media_links_block(row)
-        if media:
-            parts.append(media)
-    if parts:
-        return "\n\n".join(parts).strip()
-    return build_property_ficha(row, include_media_links=True, option_index=None)
-
-
 def enrich_detail_media_from_catalog(
     message: str,
     *,
@@ -383,23 +384,12 @@ def enrich_detail_media_from_catalog(
         logger.warning("detail_media: ref=%r sin fila en catálogo", ref)
         return body
 
-    if not _message_has_characteristics_block(body):
-        merged = _merge_detail_ficha(body, row)
-        logger.info("detail_media: ficha enriquecida id=%s", row.get("ID"))
-        return merged
-
-    if not message_offers_property_gallery(body):
-        media = build_detail_media_links_block(row)
-        if media.strip():
-            logger.info("detail_media: links inyectados id=%s", row.get("ID"))
-            return f"{body}\n\n{media}".strip()
-
-    if message_offers_property_gallery(body) and not message_offers_property_video(body):
-        video = property_video_url(row)
-        if video:
-            return f"{body}\n\nTe dejo también el video 👇".strip()
-
-    return body
+    cleaned = strip_property_media_from_message(body)
+    logger.info(
+        "detail_media: mensaje listo para envío estructurado id=%s",
+        row.get("ID"),
+    )
+    return cleaned
 
 
 async def _deliver_property_media_ctas(
@@ -409,15 +399,23 @@ async def _deliver_property_media_ctas(
     to_wa_id: str,
     row: dict[str, Any],
     graph_version: str | None = None,
+    include_preview_cta: bool = False,
 ) -> str:
     """Envía botones CTA (URL oculta). Retorna texto para historial."""
-    buttons = collect_media_link_buttons(row)
+    buttons = collect_media_link_buttons(
+        row, include_preview_cta=include_preview_cta
+    )
     if not buttons:
         return ""
 
     intro = build_detail_media_intro(row)
     for index, btn in enumerate(buttons):
-        body = intro if index == 0 else "👇"
+        if index == 0 and intro:
+            body = intro
+        elif len(buttons) == 1:
+            body = "Tocá el botón para abrir 👇"
+        else:
+            body = f"Tocá *{btn.label}* 👇"
         await send_whatsapp_cta_url_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
@@ -450,12 +448,6 @@ async def try_deliver_single_property_visual(
     Retorna texto consolidado para historial, o None para envío de texto único normal.
     """
     body = (message or "").strip()
-    if not should_enrich_property_detail(
-        outbound_message=body,
-        current_user_text=current_user_text,
-        flow_path=flow_path,
-    ):
-        return None
 
     ref = property_ref_for_detail_enrich(
         current_user_text=current_user_text,
@@ -467,67 +459,73 @@ async def try_deliver_single_property_visual(
         fallback_ref=property_ref,
         catalog_csv_path=catalog_csv_path,
     )
-    if not ref:
+    if not ref and (property_ref or "").strip():
+        ref = property_ref.strip()
+
+    row = get_property_row_by_ref(catalog_csv_path, ref) if ref else None
+    if not should_deliver_property_detail_ficha(
+        flow_path=flow_path,
+        property_ref=ref or property_ref,
+        row=row,
+        outbound_message=body,
+        current_user_text=current_user_text,
+    ):
         return None
 
-    row = get_property_row_by_ref(catalog_csv_path, ref)
-    if row is None:
-        return None
-
-    if not message_offers_property_gallery(body):
-        body = _merge_detail_ficha(body, row)
+    assert row is not None
 
     intro_part = _split_detail_intro(body)
-    _, tail_part = _split_after_visual_intro(body)
-    unified = build_detail_delivery_caption(
+    tail_part = extract_detail_tail(body)
+    if not tail_part.strip():
+        _, tail_part = _split_after_visual_intro(body)
+
+    caption = build_detail_delivery_caption(
         row,
         intro=intro_part,
         tail=tail_part,
-        include_media_links=False,
         catalog_csv_path=catalog_csv_path,
     )
 
     primary = primary_photo_url(row)
     gallery = gallery_photo_url(row)
     photo = detail_image_url(primary, gallery)
+    can_send_image = bool(photo and is_public_https_image_url(photo))
 
-    if photo and is_public_https_image_url(photo):
+    if can_send_image:
         await send_whatsapp_image_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
             image_url=photo,
-            caption=unified,
+            caption=caption,
             graph_version=graph_version,
         )
-        cta_history = await _deliver_property_media_ctas(
+    else:
+        await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
-            row=row,
+            message=caption,
             graph_version=graph_version,
+            preview_url=False,
         )
-        consolidated = "\n\n".join(p for p in (unified, cta_history) if p.strip())
-        logger.info("detail_media: imagen + botones CTA id=%s", row.get("ID"))
-        return consolidated
 
-    await send_whatsapp_text_message(
-        access_token=access_token,
-        phone_number_id=phone_number_id,
-        to_wa_id=to_wa_id,
-        message=unified,
-        graph_version=graph_version,
-        preview_url=False,
-    )
     cta_history = await _deliver_property_media_ctas(
         access_token=access_token,
         phone_number_id=phone_number_id,
         to_wa_id=to_wa_id,
         row=row,
         graph_version=graph_version,
+        include_preview_cta=not can_send_image,
     )
-    consolidated = "\n\n".join(p for p in (unified, cta_history) if p.strip())
-    logger.info("detail_media: texto + botones CTA id=%s", row.get("ID"))
+
+    consolidated = "\n\n".join(p for p in (caption, cta_history) if p.strip())
+    logger.info(
+        "detail_media: ficha id=%s imagen=%s botones=%s",
+        row.get("ID"),
+        can_send_image,
+        bool(cta_history),
+    )
     return consolidated
 
 

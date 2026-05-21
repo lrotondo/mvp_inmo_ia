@@ -4,7 +4,16 @@ from app.property_ficha import (
     build_detail_media_links_block,
     build_property_ficha,
     format_caracteristicas_text,
+    replace_markdown_links_with_labels,
 )
+
+
+def test_replace_markdown_links_keeps_icon_label_only() -> None:
+    raw = "[📸 Fotos](https://cdn.example.com/very/long/path.jpg?token=abc)"
+    out = replace_markdown_links_with_labels(raw)
+    assert out == "📸 Fotos"
+    assert "https://" not in out
+    assert "[" not in out
 
 
 def test_format_caracteristicas_bullets() -> None:
@@ -41,8 +50,8 @@ def test_media_buttons_primary_and_instagram() -> None:
     }
     buttons = collect_media_link_buttons(row)
     urls = [b.url for b in buttons]
-    assert "images.wasi.co" in urls[0]
     assert any("instagram.com" in u for u in urls)
+    assert "images.wasi.co" not in " ".join(urls) or len(urls) == 1
     assert build_detail_media_links_block(row)
     assert "http" not in build_detail_media_links_block(row)
 
