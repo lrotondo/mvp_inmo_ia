@@ -1,0 +1,3 @@
+# Solo para migración one-shot tenants Postgres → MySQL:
+# pip install -r requirements.txt -r requirements-migrate-from-pg.txt
+psycopg[binary]==3.2.13

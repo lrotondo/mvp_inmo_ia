@@ -1,4 +1,5 @@
--- Migración Embedded Signup (ejecutar en Postgres existente)
+-- Migración Embedded Signup (solo PostgreSQL legacy)
+-- MySQL: usar migrations/mysql/001_full_schema.sql
 
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS waba_id VARCHAR(64);
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS business_portfolio_id VARCHAR(64);

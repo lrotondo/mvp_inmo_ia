@@ -18,6 +18,14 @@ _SessionLocal: sessionmaker[Session] | None = None
 
 
 def _normalize_database_url(url: str) -> str:
+    """Normaliza DATABASE_URL para SQLAlchemy (MySQL o Postgres legacy)."""
+    if url.startswith("mysql://"):
+        url = url.replace("mysql://", "mysql+pymysql://", 1)
+    if url.startswith("mysql+pymysql://"):
+        if "charset=" not in url:
+            sep = "&" if "?" in url else "?"
+            return f"{url}{sep}charset=utf8mb4"
+        return url
     scheme = url.split("://", 1)[0]
     if "+psycopg" in scheme:
         return url
@@ -28,6 +36,16 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+def _engine_kwargs(url: str) -> dict:
+    if url.startswith("mysql"):
+        return {
+            "pool_pre_ping": True,
+            "pool_size": 5,
+            "max_overflow": 2,
+        }
+    return {"pool_pre_ping": True}
+
+
 def get_engine() -> Engine | None:
     global _engine
     if _engine is not None:
@@ -36,7 +54,7 @@ def get_engine() -> Engine | None:
     if not raw:
         return None
     url = _normalize_database_url(raw)
-    _engine = create_engine(url, pool_pre_ping=True)
+    _engine = create_engine(url, **_engine_kwargs(url))
     return _engine
 
 
@@ -53,7 +71,9 @@ def get_session_factory() -> sessionmaker[Session] | None:
 def init_db() -> Engine | None:
     engine = get_engine()
     if engine is None:
-        logger.info("DATABASE_URL no definida: modo sin Postgres (solo fallback META_*).")
+        logger.info(
+            "DATABASE_URL no definida: modo sin base de datos (solo fallback META_*)."
+        )
         return None
     Base.metadata.create_all(bind=engine)
     logger.info("Tablas SQLAlchemy sincronizadas (create_all).")

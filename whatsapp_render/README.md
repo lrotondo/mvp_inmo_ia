@@ -4,7 +4,7 @@ Servicio para responder WhatsApp con un solo backend:
 
 - Meta envia `POST` al webhook publico.
 - Se valida verify token (`GET`) y firma `X-Hub-Signature-256` (`POST`).
-- Se identifica la inmobiliaria por `metadata.phone_number_id` del JSON y se busca en Postgres (`tenants`).
+- Se identifica la inmobiliaria por `metadata.phone_number_id` del JSON y se busca en la base (`tenants`).
 - Cada tenant tiene su `access_token`, `phone_number_id`, prompt opcional y catálogo de **venta** + **alquiler** (CSV local o Google Sheets).
 - DeepSeek redacta la respuesta con flujo **Espacios360** (3 caminos: compra, alquiler, captación); Graph API envía el mensaje.
 
@@ -18,7 +18,7 @@ Servicio para responder WhatsApp con un solo backend:
 
 | Variable | Obligatoria | Descripcion |
 |----------|-------------|-------------|
-| `DATABASE_URL` | recomendada (multicliente) | Postgres (Render: crear Postgres y pegar URL interna) |
+| `DATABASE_URL` | recomendada (multicliente) | **MySQL** (`mysql+pymysql://...?charset=utf8mb4`). Ver [`docs/MYSQL_SETUP.md`](docs/MYSQL_SETUP.md) |
 | `GROQ_API_KEY` | si | API key de Groq |
 | `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` (respuestas al cliente) |
 | `GROQ_LEAD_MODEL` | no | Default: `llama-3.1-8b-instant` (clasificador de leads) |
@@ -55,7 +55,7 @@ Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compa
 |-------|-----------|
 | API onboarding | `app/onboarding/` — `GET /api/onboarding/config`, `POST /complete`, `PATCH /tenants/{id}` |
 | Panel frontend | [`onboarding_panel/`](onboarding_panel/) (Vite, desplegar en HTTPS) |
-| Migración SQL | [`migrations/embedded_signup.sql`](migrations/embedded_signup.sql) |
+| Migración SQL MySQL | [`migrations/mysql/001_full_schema.sql`](migrations/mysql/001_full_schema.sql) |
 | Webhook respaldo | `account_update` en `POST /meta/whatsapp` |
 
 ### Flujo
@@ -77,7 +77,22 @@ Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compa
 
 En Meta, suscribir también el webhook **`account_update`** (respaldo si el navegador cierra el popup antes de `complete`).
 
-## Modelo `tenants` (Postgres)
+## Base de datos (MySQL)
+
+Motor recomendado: **MySQL 8** externo (utf8mb4). Setup: [`docs/MYSQL_SETUP.md`](docs/MYSQL_SETUP.md).
+
+Migrar solo **tenants** desde Postgres:
+
+```powershell
+$env:OLD_DATABASE_URL="postgresql://..."
+$env:DATABASE_URL="mysql+pymysql://..."
+pip install "psycopg[binary]"   # solo para leer Postgres una vez
+python scripts/migrate_tenants_to_mysql.py
+```
+
+Esquema completo: `python -m app.sync_db` o `migrations/mysql/001_full_schema.sql`.
+
+### Modelo `tenants`
 
 Columnas principales:
 
@@ -180,9 +195,9 @@ Probar:
 - `http://127.0.0.1:8000/health`
 - `http://127.0.0.1:8000/meta/whatsapp?hub.mode=subscribe&hub.verify_token=TU_TOKEN&hub.challenge=1234`
 
-## Render (Web Service + Postgres)
+## Render (Web Service + MySQL externo)
 
-1. Crear **PostgreSQL** en Render y copiar **Internal Database URL** a `DATABASE_URL` del Web Service.
+1. **No** hace falta Postgres en Render. Crear MySQL en tu host gratuito y pegar `DATABASE_URL` en el Web Service (ver [`docs/MYSQL_SETUP.md`](docs/MYSQL_SETUP.md)).
 2. New **Web Service** → carpeta `whatsapp_render`.
 3. Version de Python: usar **3.12.x** (no 3.14). El repo trae [`runtime.txt`](runtime.txt) con `3.12.8` y [`render.yaml`](render.yaml) define `PYTHON_VERSION=3.12.8`. Si el servicio no usa Blueprint, en el dashboard de Render agrega env var **`PYTHON_VERSION`** = `3.12.8` (o desactiva override a 3.14).
 4. **Build command:** `pip install -r requirements.txt`
@@ -279,7 +294,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ## Historial de conversación
 
-- Se guardan los últimos **10 mensajes** (≈5 turnos user/assistant) por `phone_number_id` + `wa_id` en Postgres (`chat_messages`), o en memoria si no hay `DATABASE_URL`.
+- Se guardan los últimos **10 mensajes** (≈5 turnos user/assistant) por `phone_number_id` + `wa_id` en `chat_messages`, o en memoria si no hay `DATABASE_URL`.
 - Groq recibe: `system` (reglas + catálogo) + historial + mensaje actual.
 - Variable opcional: `CHAT_HISTORY_MAX_MESSAGES` (default `10`).
 

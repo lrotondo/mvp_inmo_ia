@@ -1,4 +1,4 @@
-"""Crea o actualiza tablas en Postgres (create_all). Uso: python -m app.sync_db"""
+"""Crea tablas según DATABASE_URL (MySQL o Postgres). Uso: python -m app.sync_db"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def main() -> None:
         sys.exit(1)
 
     tables = sorted(inspect(engine).get_table_names())
-    print("Tablas en Postgres:", ", ".join(tables))
+    print("Tablas:", ", ".join(tables))
     print("Listo.")
 
 

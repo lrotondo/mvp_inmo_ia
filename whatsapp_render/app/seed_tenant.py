@@ -41,7 +41,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if init_db() is None:
-        print("Error: define DATABASE_URL (Postgres) antes de ejecutar este script.", file=sys.stderr)
+        print("Error: define DATABASE_URL antes de ejecutar este script.", file=sys.stderr)
         sys.exit(1)
 
     name = args.name.strip() or None

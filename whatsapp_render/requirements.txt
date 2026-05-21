@@ -3,6 +3,6 @@ uvicorn[standard]==0.32.1
 httpx==0.28.1
 python-multipart==0.0.20
 sqlalchemy==2.0.40
-psycopg[binary]==3.2.13
+pymysql==1.1.1
 google-api-python-client==2.154.0
 google-auth==2.37.0
