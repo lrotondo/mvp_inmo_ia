@@ -153,5 +153,43 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
 
 def test_build_detail_media_links_uses_primary_photo() -> None:
     block = build_detail_media_links_block(FAKE_ROW)
-    assert "Ver galería" in block or "Ver fotos" in block
-    assert "unsplash" in block or "example" in block
+    assert "Ver fotos" in block
+    assert "unsplash" in block
+
+
+def test_try_deliver_followup_disables_link_preview() -> None:
+    from app.detail_media import try_deliver_single_property_visual
+
+    async def _run() -> None:
+        with (
+            patch(
+                "app.detail_media.get_property_row_by_ref",
+                return_value=FAKE_ROW,
+            ),
+            patch(
+                "app.detail_media.send_whatsapp_image_message",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.detail_media.send_whatsapp_text_message",
+                new_callable=AsyncMock,
+            ) as mock_txt,
+        ):
+            await try_deliver_single_property_visual(
+                access_token="tok",
+                phone_number_id="pnid",
+                to_wa_id="54911",
+                message="Te paso el material visual 👇",
+                catalog_csv_path=TENANT_RENT,
+                current_user_text="fotos de arana 200",
+                flow_path="alquiler",
+                history=[],
+                catalog_sale_path=None,
+                catalog_rent_path=TENANT_RENT,
+                property_ref="5",
+            )
+            assert mock_txt.await_count >= 1
+            kwargs = mock_txt.await_args.kwargs
+            assert kwargs.get("preview_url") is False
+
+    asyncio.run(_run())

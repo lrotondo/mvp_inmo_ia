@@ -288,9 +288,10 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
   2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)
   3. Pregunta de cierre
 - `LISTING_IMAGE_DELIVERY=false` desactiva el envío multi-imagen y vuelve a un solo mensaje de texto.
-- En **detalle / más info**: el backend arma una ficha con *Características* del catálogo + galería + video (mismo mensaje). En **listados** con `[LISTADO:ids]`, cada imagen lleva caption con características completas.
-- Si el cliente **pide solo fotos o solo video**, seguir las plantillas puntuales del prompt.
-- `foto_principal` debe ser URL **HTTPS pública** directa a JPG/PNG (Meta descarga la imagen). Drive o páginas web no sirven como imagen embebida.
+- En **detalle / más info**: el backend envía primero **imagen** con `foto_principal` (miniatura de la propiedad) y luego texto con enlaces a galería/video. Si `url_link_fotos` es Instagram, no define el preview: va como enlace secundario «Ver galería en Instagram».
+- En **listados** con `[LISTADO:ids]`, cada imagen lleva caption con características completas.
+- Si el cliente **pide solo fotos o solo video**, el backend inyecta los links; el LLM no debe pegar URLs crudas.
+- `foto_principal` debe ser URL **HTTPS pública** directa a JPG/PNG (Meta descarga la imagen). Perfiles de Instagram u otras páginas no sirven como imagen embebida.
 
 ## Historial de conversación
 

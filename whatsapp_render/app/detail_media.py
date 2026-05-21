@@ -5,11 +5,13 @@ import re
 from typing import Any
 
 from app.catalog import (
+    gallery_photo_url,
     get_property_row_by_ref,
     primary_photo_url,
     property_video_url,
 )
 from app.lead_context import extract_property_ref
+from app.media_urls import detail_image_url, preview_link_for_text
 from app.meta_client import (
     is_public_https_image_url,
     send_whatsapp_image_message,
@@ -444,8 +446,11 @@ async def try_deliver_single_property_visual(
         text_parts.append(ficha_text)
     followup_text = "\n\n".join(text_parts)
 
-    photo = primary_photo_url(row)
-    if is_public_https_image_url(photo):
+    primary = primary_photo_url(row)
+    gallery = gallery_photo_url(row)
+    photo = detail_image_url(primary, gallery)
+
+    if photo and is_public_https_image_url(photo):
         caption = build_property_ficha(row, include_media_links=False, option_index=None)
         await send_whatsapp_image_message(
             access_token=access_token,
@@ -462,6 +467,7 @@ async def try_deliver_single_property_visual(
                 to_wa_id=to_wa_id,
                 message=followup_text,
                 graph_version=graph_version,
+                preview_url=False,
             )
         consolidated = "\n\n".join(
             p for p in (caption, followup_text) if p.strip()
@@ -470,12 +476,15 @@ async def try_deliver_single_property_visual(
         return consolidated
 
     outbound_text = followup_text.strip() or ficha_text
+    preview_link = preview_link_for_text(primary, gallery)
+    enable_preview = bool(preview_link)
     await send_whatsapp_text_message(
         access_token=access_token,
         phone_number_id=phone_number_id,
         to_wa_id=to_wa_id,
         message=outbound_text,
         graph_version=graph_version,
+        preview_url=enable_preview,
     )
     logger.info("detail_media: solo texto con links id=%s", row.get("ID"))
     return outbound_text

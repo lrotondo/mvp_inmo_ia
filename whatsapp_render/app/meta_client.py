@@ -6,8 +6,9 @@ import re
 
 import httpx
 
+from app.media_urls import is_likely_direct_image_url
+
 _URL_IN_TEXT = re.compile(r"https?://", re.I)
-_HTTPS_IMAGE_URL = re.compile(r"^https://", re.I)
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,8 @@ def _token_debug(token: str) -> str:
 
 
 def is_public_https_image_url(url: str) -> bool:
-    u = (url or "").strip()
-    return bool(u) and bool(_HTTPS_IMAGE_URL.match(u))
+    """Alias: imagen directa HTTPS (excluye Instagram/perfiles)."""
+    return is_likely_direct_image_url(url)
 
 
 async def _post_whatsapp_payload(
@@ -89,15 +90,20 @@ async def send_whatsapp_text_message(
     to_wa_id: str,
     message: str,
     graph_version: str | None = None,
+    preview_url: bool | None = None,
 ) -> None:
     body = message.strip() or "No pude generar una respuesta en este momento."
+    if preview_url is None:
+        enable_preview = bool(_URL_IN_TEXT.search(body))
+    else:
+        enable_preview = preview_url
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": to_wa_id,
         "type": "text",
         "text": {
-            "preview_url": bool(_URL_IN_TEXT.search(body)),
+            "preview_url": enable_preview,
             "body": body,
         },
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.catalog import (
@@ -7,6 +8,10 @@ from app.catalog import (
     primary_photo_url,
     property_video_url,
 )
+from app.media_urls import is_likely_direct_image_url, is_social_or_page_url
+
+_STRIP_BARE_URL_RE = re.compile(r"https?://\S+", re.I)
+_INSTAGRAM_IN_TEXT_RE = re.compile(r"instagram\.com", re.I)
 
 
 def tour_360_url(row: dict[str, Any]) -> str:
@@ -22,7 +27,12 @@ def format_caracteristicas_text(raw: str, *, max_chars: int = 800) -> str:
     if not parts:
         return ""
     lines = ["*Características:*"]
-    lines.extend(f"• {p}" for p in parts)
+    for p in parts:
+        if _INSTAGRAM_IN_TEXT_RE.search(p) or _STRIP_BARE_URL_RE.search(p):
+            continue
+        lines.append(f"• {p}")
+    if len(lines) <= 1:
+        return ""
     block = "\n".join(lines)
     if len(block) <= max_chars:
         return block
@@ -69,23 +79,60 @@ def build_property_header_lines(
     return lines
 
 
-def build_detail_media_links_block(row: dict[str, Any]) -> str:
-    fotos = gallery_photo_url(row) or primary_photo_url(row)
+def build_detail_media_links_block(
+    row: dict[str, Any],
+    *,
+    prefer_primary_preview: bool = True,
+) -> str:
+    primary = primary_photo_url(row)
+    gallery = gallery_photo_url(row)
     video = property_video_url(row)
-    if not fotos and not video:
-        return ""
     lines: list[str] = []
 
-    if fotos and video:
+    photo_link = ""
+    external_gallery = ""
+
+    if prefer_primary_preview:
+        if is_likely_direct_image_url(primary):
+            photo_link = primary
+        elif is_likely_direct_image_url(gallery):
+            photo_link = gallery
+        elif gallery and not is_social_or_page_url(gallery):
+            photo_link = gallery
+        elif primary and not is_social_or_page_url(primary):
+            photo_link = primary
+
+        if gallery and gallery != photo_link and is_social_or_page_url(gallery):
+            external_gallery = gallery
+        elif (
+            gallery
+            and gallery != photo_link
+            and not is_likely_direct_image_url(gallery)
+        ):
+            external_gallery = gallery
+    else:
+        fotos = gallery or primary
+        if fotos:
+            photo_link = fotos
+
+    if photo_link and video:
         lines.append("Acá tenés todo el material visual de esta propiedad 👇")
-        lines.append(f"[📸 Ver galería de fotos]({fotos})")
+        lines.append(f"[📸 Ver fotos]({photo_link})")
         lines.append(f"[🎥 Ver video]({video})")
-    elif fotos:
+    elif photo_link:
         lines.append("¡Genial! Te dejo la galería completa 👇")
-        lines.append(f"[📸 Ver galería de fotos]({fotos})")
+        lines.append(f"[📸 Ver fotos]({photo_link})")
     elif video:
         lines.append("Te comparto el video de la propiedad 👇")
         lines.append(f"[🎥 Ver video]({video})")
+
+    if external_gallery:
+        label = (
+            "[📱 Ver galería en Instagram]({url})"
+            if "instagram" in external_gallery.lower()
+            else "[📱 Ver galería completa]({url})"
+        )
+        lines.append(label.format(url=external_gallery))
 
     tour = tour_360_url(row)
     if tour and not lines:
