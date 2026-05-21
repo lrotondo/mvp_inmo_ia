@@ -5,7 +5,9 @@ import re
 from typing import Any
 
 from app.catalog import (
+    find_property_row_for_user_text,
     gallery_photo_url,
+    get_properties_by_ids,
     get_property_row_by_ref,
     primary_photo_url,
     property_video_url,
@@ -43,6 +45,7 @@ _TOUR_LINK_RE = re.compile(
     re.I,
 )
 _LISTADO_TAG_RE = re.compile(r"\[LISTADO:", re.I)
+_LISTADO_IDS_RE = re.compile(r"\[LISTADO:\s*([^\]]+)\]", re.I)
 _MEDIA_INTRO_RE = re.compile(
     r"^\s*(?:Acá tenés todo el material visual|Te dejo la galería|"
     r"Te comparto (?:el video|la galería)|¡Genial! Te dejo la galería|"
@@ -57,6 +60,14 @@ _DETAIL_REQUEST_RE = re.compile(
     r"(?:ver|mostr(?:ar|ame))\s+(?:las\s+)?fotos|"
     r"fotos?|videos?|"
     r"galer[ií]a|recorrido|tour\s*360"
+    r")\b",
+    re.I,
+)
+_MISSING_MEDIA_RE = re.compile(
+    r"\b("
+    r"no\s+veo\s+(?:las\s+)?fotos|"
+    r"no\s+(?:me\s+)?(?:llegaron|mandaron|enviaron)\s+(?:las\s+)?fotos|"
+    r"sin\s+fotos|faltan\s+(?:las\s+)?fotos"
     r")\b",
     re.I,
 )
@@ -100,7 +111,14 @@ def message_offers_property_video(text: str) -> bool:
 
 
 def user_requests_property_detail(current_user_text: str) -> bool:
-    return bool(_DETAIL_REQUEST_RE.search((current_user_text or "").strip()))
+    text = (current_user_text or "").strip()
+    return bool(
+        _DETAIL_REQUEST_RE.search(text) or _MISSING_MEDIA_RE.search(text)
+    )
+
+
+def user_reports_missing_media(current_user_text: str) -> bool:
+    return bool(_MISSING_MEDIA_RE.search((current_user_text or "").strip()))
 
 
 def user_showed_property_interest(current_user_text: str) -> bool:
@@ -155,6 +173,8 @@ def should_enrich_property_detail(
 
     if user_requests_property_detail(current_user_text):
         return True
+    if user_reports_missing_media(current_user_text):
+        return True
     if user_showed_property_interest(current_user_text):
         return True
     if bot_promises_visual_material(body):
@@ -166,6 +186,85 @@ def should_enrich_property_detail(
             or bot_promises_visual_material(body)
         )
     return False
+
+
+def _rows_from_recent_listado(
+    history: list | None,
+    catalog_csv_path: str | None,
+) -> list[dict[str, Any]]:
+    """Filas del último [LISTADO:...] en el historial (opciones que vio el cliente)."""
+    if not history or not catalog_csv_path:
+        return []
+    for turn in reversed(history):
+        if turn.role != "assistant":
+            continue
+        match = _LISTADO_IDS_RE.search(turn.content or "")
+        if not match:
+            continue
+        ids = [
+            pid.strip()
+            for pid in re.split(r"[,;\s]+", match.group(1))
+            if pid.strip()
+        ]
+        rows = get_properties_by_ids(catalog_csv_path, ids, max_items=3)
+        if rows:
+            return rows
+    return []
+
+
+def resolve_detail_property_row(
+    *,
+    catalog_csv_path: str | None,
+    current_user_text: str,
+    outbound_message: str,
+    history: list | None,
+    property_ref: str,
+    flow_path: str,
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+) -> dict[str, Any] | None:
+    """Resuelve fila del catálogo para enviar ficha + media."""
+    ref = property_ref_for_detail_enrich(
+        current_user_text=current_user_text,
+        outbound_message=outbound_message,
+        history=history or [],
+        flow_path=flow_path,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+        fallback_ref=property_ref,
+        catalog_csv_path=catalog_csv_path,
+    )
+    if not ref and (property_ref or "").strip():
+        ref = property_ref.strip()
+
+    row: dict[str, Any] | None = None
+    if ref:
+        row = get_property_row_by_ref(catalog_csv_path, ref)
+
+    if row is None:
+        listado_rows = _rows_from_recent_listado(history, catalog_csv_path)
+        for blob in (current_user_text, outbound_message):
+            if not (blob or "").strip():
+                continue
+            row = find_property_row_for_user_text(
+                catalog_csv_path,
+                blob,
+                rows_scope=listado_rows or None,
+            )
+            if row is not None:
+                break
+
+    if row is None and history:
+        for turn in reversed(history or []):
+            if turn.role != "user":
+                continue
+            row = find_property_row_for_user_text(
+                catalog_csv_path, turn.content
+            )
+            if row is not None:
+                break
+
+    return row
 
 
 def _property_ref_from_option_number(
@@ -221,6 +320,22 @@ def property_ref_for_detail_enrich(
 
     if (fallback_ref or "").strip():
         return fallback_ref.strip()
+
+    if (outbound_message or "").strip() and (
+        bot_promises_visual_material(outbound_message)
+        or user_showed_property_interest(current_user_text)
+    ):
+        ref_bot = extract_property_ref(
+            "",
+            flow_path=flow_path,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            history=[],
+            current_user_text=outbound_message,
+            user_only=True,
+        )
+        if ref_bot.strip():
+            return ref_bot.strip()
 
     opt_out = _property_ref_from_option_number(outbound_message, catalog_csv_path)
     if opt_out:
@@ -379,7 +494,18 @@ def enrich_detail_media_from_catalog(
         )
         return body
 
-    row = get_property_row_by_ref(catalog_csv_path, ref)
+    row = resolve_detail_property_row(
+        catalog_csv_path=catalog_csv_path,
+        current_user_text=current_user_text,
+        outbound_message=body,
+        history=history,
+        property_ref=ref or property_ref,
+        flow_path=flow_path,
+        catalog_sale_path=catalog_sale_path,
+        catalog_rent_path=catalog_rent_path,
+    )
+    if row is None:
+        row = get_property_row_by_ref(catalog_csv_path, ref)
     if row is None:
         logger.warning("detail_media: ref=%r sin fila en catálogo", ref)
         return body
@@ -449,23 +575,20 @@ async def try_deliver_single_property_visual(
     """
     body = (message or "").strip()
 
-    ref = property_ref_for_detail_enrich(
+    row = resolve_detail_property_row(
+        catalog_csv_path=catalog_csv_path,
         current_user_text=current_user_text,
         outbound_message=body,
-        history=history or [],
+        history=history,
+        property_ref=property_ref,
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
-        fallback_ref=property_ref,
-        catalog_csv_path=catalog_csv_path,
     )
-    if not ref and (property_ref or "").strip():
-        ref = property_ref.strip()
 
-    row = get_property_row_by_ref(catalog_csv_path, ref) if ref else None
     if not should_deliver_property_detail_ficha(
         flow_path=flow_path,
-        property_ref=ref or property_ref,
+        property_ref=property_ref,
         row=row,
         outbound_message=body,
         current_user_text=current_user_text,

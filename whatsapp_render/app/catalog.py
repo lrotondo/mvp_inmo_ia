@@ -213,11 +213,67 @@ def property_video_url(row: dict[str, Any]) -> str:
     return str(row.get("url_link_video") or "").strip()
 
 
+def _normalize_match_text(text: str) -> str:
+    from app.lead_context import _normalize_property_match_text
+
+    return _normalize_property_match_text((text or "").lower())
+
+
+def field_matches_reference(reference_norm: str, field_value: str) -> bool:
+    """True si la referencia (ej. 'los nogales') coincide con un campo del catálogo."""
+    val = _normalize_match_text(field_value)
+    if len(val) < 4 or len(reference_norm) < 4:
+        return False
+    if val in reference_norm or reference_norm in val:
+        return True
+    tokens = [t for t in re.findall(r"[a-záéíóúñ0-9]{4,}", val)]
+    if not tokens:
+        return False
+    hits = [t for t in tokens if t in reference_norm]
+    if len(tokens) == 1:
+        return bool(hits)
+    if len(hits) >= min(2, len(tokens)):
+        return True
+    # Dirección compuesta: un token distintivo alcanza (ej. "nogales" sin "tilos").
+    return any(len(t) >= 5 and t in reference_norm for t in tokens)
+
+
+def find_property_row_for_user_text(
+    catalog_csv_path: str | None,
+    text: str,
+    *,
+    rows_scope: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Mejor fila cuyo título/dirección/barrio coincide con el texto del usuario."""
+    blob_norm = _normalize_match_text(text)
+    if len(blob_norm) < 4:
+        return None
+
+    if rows_scope is not None:
+        rows_iter: list[dict[str, Any]] = rows_scope
+    else:
+        rows_iter = list(_load_rows(_ref_for_path(catalog_csv_path)))
+
+    best: dict[str, Any] | None = None
+    best_len = 0
+    for row in rows_iter:
+        if rows_scope is None and not _row_available_for_id_lookup(row):
+            continue
+        for field in ("Titulo", "Direccion", "Barrio"):
+            val = str(row.get(field, "")).strip()
+            if not field_matches_reference(blob_norm, val):
+                continue
+            if len(val) > best_len:
+                best = row
+                best_len = len(val)
+    return best
+
+
 def get_property_row_by_ref(
     catalog_csv_path: str | None,
     property_ref: str,
 ) -> dict[str, Any] | None:
-    """Busca fila por ID, 'ID x' o coincidencia en dirección/barrio."""
+    """Busca fila por ID, 'ID x' o coincidencia en dirección/barrio/título."""
     ref = _normalize_property_id(property_ref)
     if not ref:
         return None
@@ -230,7 +286,7 @@ def get_property_row_by_ref(
     if by_id:
         return by_id[0]
 
-    ref_lower = ref.lower()
+    ref_norm = _normalize_match_text(ref)
     best: dict[str, Any] | None = None
     best_len = 0
     catalog_ref = _ref_for_path(catalog_csv_path)
@@ -238,8 +294,8 @@ def get_property_row_by_ref(
         if not _row_available_for_id_lookup(row):
             continue
         for field in ("Titulo", "Direccion", "Barrio"):
-            val = str(row.get(field, "")).strip().lower()
-            if len(val) < 4 or val not in ref_lower:
+            val = str(row.get(field, "")).strip()
+            if not field_matches_reference(ref_norm, val):
                 continue
             if len(val) > best_len:
                 best = row

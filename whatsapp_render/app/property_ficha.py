@@ -227,6 +227,19 @@ def collect_media_link_buttons(
             MediaLinkButton(friendly_cta_label_for_url(tour, kind="tour"), tour)
         )
 
+    if not buttons:
+        for url, kind in (
+            (gallery, "album"),
+            (primary, "preview"),
+            (video, "video"),
+            (tour, "tour"),
+        ):
+            if url:
+                buttons.append(
+                    MediaLinkButton(friendly_cta_label_for_url(url, kind=kind), url)
+                )
+                break
+
     return buttons
 
 

@@ -248,7 +248,13 @@ def _property_ref_from_blob_norm(
 
             for cand in candidates:
                 key = _normalize_property_match_text(cand)
-                if len(key) < 4 or key not in blob_norm:
+                if len(key) < 4:
+                    continue
+                from app.catalog import field_matches_reference
+
+                if key not in blob_norm and not field_matches_reference(
+                    blob_norm, cand
+                ):
                     continue
                 if len(key) > best_len:
                     best = cand
