@@ -95,32 +95,34 @@ function launchWhatsAppSignup(configId: string) {
   connectHint.textContent = "Abrí el popup de Meta y seguí los pasos…";
 
   window.FB.login(
-    async (response) => {
-      if (!response.authResponse?.code) {
-        showError("No se recibió código de autorización. Intentá de nuevo.");
-        return;
-      }
-      if (!embeddedAssets?.waba_id || !embeddedAssets.phone_number_id) {
-        showError(
-          "Faltan IDs de WhatsApp (WABA / teléfono). Cerrá el popup y volvé a conectar.",
-        );
-        return;
-      }
-      try {
-        const name = (document.getElementById("tenant-name") as HTMLInputElement).value.trim();
-        lastComplete = await postComplete({
-          code: response.authResponse.code,
-          ...embeddedAssets,
-          name: name || undefined,
-        });
-        stepCatalog.classList.remove("hidden");
-        connectHint.textContent = "Conexión exitosa.";
-        doneSummary.textContent = `Tenant #${lastComplete.tenant_id} — teléfono ${
-          lastComplete.display_phone || lastComplete.phone_number_id
-        }`;
-      } catch (err) {
-        showError(err instanceof Error ? err.message : String(err));
-      }
+    (response) => {
+      void (async () => {
+        if (!response.authResponse?.code) {
+          showError("No se recibió código de autorización. Intentá de nuevo.");
+          return;
+        }
+        if (!embeddedAssets?.waba_id || !embeddedAssets.phone_number_id) {
+          showError(
+            "Faltan IDs de WhatsApp (WABA / teléfono). Cerrá el popup y volvé a conectar.",
+          );
+          return;
+        }
+        try {
+          const name = (document.getElementById("tenant-name") as HTMLInputElement).value.trim();
+          lastComplete = await postComplete({
+            code: response.authResponse.code,
+            ...embeddedAssets,
+            name: name || undefined,
+          });
+          stepCatalog.classList.remove("hidden");
+          connectHint.textContent = "Conexión exitosa.";
+          doneSummary.textContent = `Tenant #${lastComplete.tenant_id} — teléfono ${
+            lastComplete.display_phone || lastComplete.phone_number_id
+          }`;
+        } catch (err) {
+          showError(err instanceof Error ? err.message : String(err));
+        }
+      })();
     },
     {
       config_id: configId,
