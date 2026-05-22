@@ -9,6 +9,7 @@ from app.catalog import (
     primary_photo_url,
     property_video_url,
 )
+from app.catalog_profiles import normalize_catalog_branch
 from app.media_urls import is_likely_direct_image_url, is_social_or_page_url
 
 _STRIP_BARE_URL_RE = re.compile(r"https?://\S+", re.I)
@@ -52,23 +53,45 @@ def format_caracteristicas_text(raw: str, *, max_chars: int = 800) -> str:
     return block[: max_chars - 3].rstrip() + "..."
 
 
+def _ubicacion_line(row: dict[str, Any], *, branch: str | None) -> str:
+    direccion = str(row.get("Direccion", "")).strip()
+    if normalize_catalog_branch(branch or "") == "alquiler":
+        barrio = str(row.get("Barrio", "")).strip()
+        if barrio:
+            return f"{direccion}, {barrio}" if direccion else barrio
+        return direccion
+
+    lugar = str(row.get("Lugar", "")).strip()
+    zona = str(row.get("Zona", "")).strip() or str(row.get("Barrio", "")).strip()
+    parts: list[str] = []
+    for part in (direccion, lugar, zona):
+        if part and part not in parts:
+            parts.append(part)
+    return ", ".join(parts)
+
+
 def build_property_header_lines(
     row: dict[str, Any],
     *,
     option_index: int | None = None,
+    branch: str | None = None,
 ) -> list[str]:
     titulo = str(row.get("Titulo", "")).strip()
-    direccion = str(row.get("Direccion", "")).strip()
-    barrio = str(row.get("Barrio", "")).strip()
-    ubicacion = direccion
-    if barrio:
-        ubicacion = f"{direccion}, {barrio}" if direccion else barrio
+    tipo = str(row.get("Tipo", "")).strip()
+    ubicacion = _ubicacion_line(row, branch=branch)
 
     precio = str(row.get("Precio", "")).strip()
     dormitorios = str(row.get("Dormitorios", "")).strip()
     ambientes = str(row.get("Ambientes", "")).strip()
+    expensas = str(row.get("Expensas", "")).strip()
+    is_rent = normalize_catalog_branch(branch or "") == "alquiler"
 
     headline = titulo or ubicacion
+    if tipo and titulo and tipo.lower() not in titulo.lower():
+        headline = f"{tipo} — {titulo}"
+    elif tipo and not titulo:
+        headline = tipo
+
     if option_index is not None:
         if headline:
             title = f"*Opción {option_index} — {headline}*"
@@ -83,9 +106,21 @@ def build_property_header_lines(
     if titulo and ubicacion and ubicacion.lower() != titulo.lower():
         detail_parts.append(ubicacion)
     if precio:
-        detail_parts.append(
-            f"Precio: ${precio}" if not precio.startswith("$") else f"Precio: {precio}"
-        )
+        if is_rent:
+            label = "Precio mensual"
+        elif precio.upper().startswith("US$") or "usd" in precio.lower():
+            label = "Precio USD"
+        else:
+            label = "Precio"
+        if precio.startswith("$") or precio.upper().startswith("US$"):
+            detail_parts.append(f"{label}: {precio}")
+        else:
+            detail_parts.append(f"{label}: ${precio}")
+    if is_rent and expensas:
+        if expensas.startswith("$"):
+            detail_parts.append(f"Expensas: {expensas}")
+        else:
+            detail_parts.append(f"Expensas: ${expensas}")
     if dormitorios:
         if "dormitorio" in dormitorios.lower():
             detail_parts.append(dormitorios)
@@ -474,6 +509,7 @@ def build_detail_delivery_caption(
     include_media_links: bool = False,
     caption_max_chars: int = 1024,
     catalog_csv_path: str | None = None,
+    branch: str | None = None,
 ) -> str:
     """
     Caption de detalle: intro corto + datos del catálogo + pregunta de cierre.
@@ -484,7 +520,7 @@ def build_detail_delivery_caption(
     if intro_clean:
         parts.append(intro_clean)
 
-    parts.extend(build_property_header_lines(row, option_index=None))
+    parts.extend(build_property_header_lines(row, option_index=None, branch=branch))
 
     chars = format_caracteristicas_text(
         str(row.get("Caracteristicas", "")),
@@ -508,10 +544,11 @@ def build_property_ficha(
     include_media_links: bool = True,
     option_index: int | None = None,
     caption_max_chars: int = 1024,
+    branch: str | None = None,
 ) -> str:
     """Ficha unificada: encabezado + características + (opcional) galería/video."""
     parts: list[str] = []
-    parts.extend(build_property_header_lines(row, option_index=option_index))
+    parts.extend(build_property_header_lines(row, option_index=option_index, branch=branch))
 
     chars = format_caracteristicas_text(
         str(row.get("Caracteristicas", "")),

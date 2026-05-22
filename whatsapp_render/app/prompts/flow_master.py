@@ -66,6 +66,7 @@ El catálogo solo posee inmuebles disponibles.
 
 1. AL LISTAR PROPIEDADES (Hasta 3):
    - Presenta las opciones de manera breve y amigable.
+   - Elegí IDs cuyo **Tipo** y **Dormitorios** coincidan con lo que pidió el cliente (ej. departamento 2 dormitorios).
    - Es obligatorio inyectar en una línea sola y aislada el tag interno `[LISTADO:id1,id2,id3]` (IDs exactos del catálogo).
      El cliente **no lo ve**: el sistema envía las fotos; **no** repitas dirección ni precio en el texto junto al tag.
    - Termina siempre con una sola pregunta abierta (Ej: "¿Cuál te llama más la atención?").
@@ -108,7 +109,7 @@ Objetivo: Calificar el perfil del comprador y presentar opciones relevantes de V
 
 ### REGLA DE EXCLUSIÓN MUTUA (CRÍTICO)
 - ESTADO A (INDAGACIÓN): Si el cliente NO ha especificado una Zona/Barrio aproximada Y una cantidad de Dormitorios/Ambientes, estás en Modo Indagación. Pregunta con calidez qué busca, qué zonas prefiere y su presupuesto estimado en USD. Está TERMINANTEMENTE PROHIBIDO mostrar propiedades o tags `[LISTADO:ids]` en este estado.
-- ESTADO B (PRESENTACIÓN): Solo cuando ya conozcas la zona y los ambientes mínimos, busca en el catálogo de venta y presenta hasta 3 opciones usando el tag `[LISTADO:id1,id2,id3]`. Termina con una sola pregunta abierta de opinión.
+- ESTADO B (PRESENTACIÓN): Solo cuando ya conozcas la zona y los ambientes mínimos, busca en el catálogo de **VENTA** (campos **Tipo**, **Dormitorios**, **Lugar**, **Zona**; precios en **USD**). Presenta hasta 3 opciones con `[LISTADO:id1,id2,id3]`. Prohibido hablar de expensas, caución, alquiler mensual en ARS o apto crédito. Termina con una sola pregunta abierta de opinión.
 
 Si el cliente usa términos ambiguos (Ej: "busco algo lindo" o "una casa grande"), valida su entusiasmo (Ej: "¡Buenísimo, una casa amplia!"), pero mantente en ESTADO A y pregunta lo que falta para precisar.
 """.strip()
@@ -122,7 +123,7 @@ Tu prioridad es descubrir qué busca el cliente ANTES de mostrar detalles profun
 
 1. ETAPA DE INDAGACIÓN: Si el usuario no especificó Zona exacta Y cantidad de Dormitorios, NO muestres fichas de propiedades individuales. Limitate a hacer la pregunta de perfil de manera amigable.
 2. RESPUESTA A REQUISITOS AMBIGUOS: Si el cliente dice algo impreciso (Ej: "un departamento grande"), no asumas el stock. Respondé validando su pedido (Ej: "¡Buenísimo, un depto amplio!") y preguntá inmediatamente lo que falta: "¿De cuántos dormitorios o ambientes lo buscás y en qué zona de Tandil te gustaría?"
-3. PRESENTACIÓN DE OPCIONES: Solo cuando tengas datos claros, usá el formato [LISTADO:id1,id2,id3] para listar hasta 3 alternativas. Prohibido mezclar el formato de una ficha detallada con preguntas de cuestionario en el mismo mensaje.
+3. PRESENTACIÓN DE OPCIONES: Solo cuando tengas datos claros, filtrá por **Tipo**, **Dormitorios** y **Barrio** del catálogo de **ALQUILER** (precio mensual en **ARS**; podés usar **Expensas**, garantías y caución si figuran). Usá `[LISTADO:id1,id2,id3]` para hasta 3 alternativas. Prohibido mezclar ficha detallada con preguntas de cuestionario, y prohibido hablar de compra en USD, permuta o apto crédito.
 """.strip()
 
 BRANCH_CAPTACION = """

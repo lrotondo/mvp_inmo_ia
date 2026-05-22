@@ -22,19 +22,38 @@ _SPREADSHEET_URL_RE = re.compile(
 )
 _SPREADSHEET_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{20,}$")
 
-# Fila 1 de la planilla / CSV: ID, Titulo, Direccion, Barrio, Precio, Dormitorios,
-# Ambientes, Caracteristicas, Disponible, foto_principal, Tour_360, url_link_fotos,
-# url_link_video
+# Venta: ID, Titulo, Tipo, Direccion, Lugar, Zona, Precio, Disponible, Dormitorios,
+# Ambientes, Caracteristicas, Foto_principal, url_link_fotos, url_link_video
+# Alquiler: ID, Titulo, Tipo, Direccion, Barrio, Precio, Disponible, Dormitorios,
+# Ambientes, Caracteristicas, Foto_principal, Tour_360, url_link_fotos, url_link_video
+# (+ opcionales: Expensas, Garantia_Propietaria, Seguro_Caucion, Admite_mascotas, Ajuste_IPC)
 
 _HEADER_ALIASES: dict[str, str] = {
     "id": "ID",
     "titulo": "Titulo",
     "título": "Titulo",
     "title": "Titulo",
+    "tipo": "Tipo",
+    "type": "Tipo",
     "direccion": "Direccion",
     "dirección": "Direccion",
     "barrio": "Barrio",
+    "lugar": "Lugar",
+    "zona": "Zona",
     "precio": "Precio",
+    "expensas": "Expensas",
+    "garantia": "Garantia_Propietaria",
+    "garantia propietaria": "Garantia_Propietaria",
+    "garantía propietaria": "Garantia_Propietaria",
+    "seguro de caucion": "Seguro_Caucion",
+    "seguro caucion": "Seguro_Caucion",
+    "caucion": "Seguro_Caucion",
+    "caución": "Seguro_Caucion",
+    "admite mascotas": "Admite_mascotas",
+    "mascotas": "Admite_mascotas",
+    "ajuste": "Ajuste_IPC",
+    "ajuste ipc": "Ajuste_IPC",
+    "ipc": "Ajuste_IPC",
     "dormitorios": "Dormitorios",
     "dormitorio": "Dormitorios",
     "bedrooms": "Dormitorios",

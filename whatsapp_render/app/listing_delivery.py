@@ -124,18 +124,29 @@ def parse_listado_tag(text: str) -> ParsedListado | None:
     )
 
 
-def build_listing_caption(row: dict[str, Any], index: int) -> str:
+def build_listing_caption(
+    row: dict[str, Any],
+    index: int,
+    *,
+    flow_path: str = "compra",
+) -> str:
     """Caption para mensaje imagen: encabezado + características (+ tour si aplica)."""
     return build_property_ficha(
         row,
         include_media_links=False,
         option_index=index,
+        branch=flow_path,
     )
 
 
-def build_listing_fallback_text(row: dict[str, Any], index: int) -> str:
+def build_listing_fallback_text(
+    row: dict[str, Any],
+    index: int,
+    *,
+    flow_path: str = "compra",
+) -> str:
     """Texto cuando no hay imagen enviable (sin URLs crudas en el cuerpo)."""
-    return build_listing_caption(row, index)
+    return build_listing_caption(row, index, flow_path=flow_path)
 
 
 def consolidate_history_text(
@@ -265,7 +276,7 @@ async def deliver_bot_response(
 
     sendable: list[tuple[dict[str, Any], str, str | None]] = []
     for idx, row in enumerate(rows, start=1):
-        caption = build_listing_caption(row, idx)
+        caption = build_listing_caption(row, idx, flow_path=flow_path)
         photo = primary_photo_url(row)
         image_url = photo if is_public_https_image_url(photo) else None
         sendable.append((row, caption, image_url))

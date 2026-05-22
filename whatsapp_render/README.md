@@ -207,23 +207,37 @@ Probar:
 
 ### Catálogo con Google Sheets (recomendado en producción)
 
-1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados (orden flexible; aliases aceptados):
+1. Crear **dos** planillas por inmobiliaria (venta y alquiler). Fila 1, encabezados (orden flexible; aliases aceptados). **No mezclar columnas entre ramas**: el bot formatea y filtra distinto según compra vs alquiler.
 
-   `ID | Titulo | Direccion | Barrio | Precio | Dormitorios | Ambientes | Caracteristicas | Disponible | foto_principal | Tour_360 | url_link_fotos | url_link_video`
+   **Venta** (`catalog_csv_path`):
+
+   `ID | Titulo | Tipo | Direccion | Lugar | Zona | Precio | Disponible | Dormitorios | Ambientes | Caracteristicas | Foto_principal | url_link_fotos | url_link_video`
 
    | Columna | Obligatoria | Uso |
    |---------|-------------|-----|
-   | `ID` | sí | Identificador único de la fila |
-   | `Titulo` | recomendada | Nombre comercial de la publicación (el agente lo usa para describir y matchear) |
-   | `Dormitorios` | recomendada | Cantidad de dormitorios (número); el agente filtra cuando el cliente pide N dormitorios |
-   | `Direccion`, `Barrio`, `Precio`, `Ambientes`, `Caracteristicas` | sí | Datos mostrados al cliente |
-   | `Disponible` | sí para publicar | Solo filas con `si`, `sí`, `1`, `true`, etc. aparecen en el bot. **Vacío u otro valor = oculta** |
-   | `foto_principal` | recomendada | Foto del resumen en listados (`[📸 Ver foto]`) |
-   | `Tour_360` | opcional | Tour en listados (`[🔄 Tour 360°]`) si está cargado |
-   | `url_link_fotos` | opcional | Carrusel / galería en detalle o si piden fotos (`[📸 Ver galería de fotos]`) |
-   | `url_link_video` | opcional | Video externo cuando piden video (`[🎥 Ver video]`) |
+   | `ID` | sí | Identificador único |
+   | `Titulo`, `Tipo` | recomendadas | Nombre comercial y tipo (Departamento, Casa, …) |
+   | `Direccion`, `Lugar`, `Zona` | sí | Ubicación en venta (no usar `Barrio` en venta; usar `Zona`) |
+   | `Precio` | sí | **USD** (ej. `US$120.000`) |
+   | `Disponible` | sí para publicar | Solo `si` / afirmativos entran al bot |
+   | `Dormitorios`, `Ambientes`, `Caracteristicas` | recomendadas | Filtro y ficha |
+   | `Foto_principal`, `url_link_fotos`, `url_link_video` | recomendadas | Media en WhatsApp (sin `Tour_360` en venta) |
 
-   **Compatibilidad:** el encabezado antiguo `Link_Fotos` se normaliza a `foto_principal`.
+   **Alquiler** (`catalog_rent_csv_path`):
+
+   `ID | Titulo | Tipo | Direccion | Barrio | Precio | Disponible | Dormitorios | Ambientes | Caracteristicas | Foto_principal | Tour_360 | url_link_fotos | url_link_video`
+
+   Opcionales en alquiler: `Expensas`, `Garantia_Propietaria`, `Seguro_Caucion`, `Admite_mascotas`, `Ajuste_IPC`.
+
+   | Columna | Obligatoria | Uso |
+   |---------|-------------|-----|
+   | `Barrio` | sí (alquiler) | Zona/barrio del inmueble |
+   | `Precio` | sí | **Alquiler mensual en ARS** |
+   | `Expensas`, garantías, caución, mascotas, IPC | opcionales | Condiciones operativas del contrato |
+   | `Tour_360` | opcional | Botón CTA en detalle de alquiler |
+   | Resto | igual que venta | `Disponible`, media, etc. |
+
+   **Compatibilidad:** `Link_Fotos` → `foto_principal`; aliases `lugar`, `zona`, `expensas`, `garantia`, `caucion`, `mascotas`, `ipc` en ingestión.
 
    **Migración:** si agregás la columna `Disponible` a una planilla existente, marcá `si` en **cada** fila que quieras que el agente ofrezca. Sin `disponible=si` la propiedad no entra al catálogo del prompt ni a búsqueda por ID.
 
@@ -278,7 +292,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Catálogo y relevancia
 
 - Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
-- El bloque del **system prompt** usa formato **compacto** por fila: ID, título, dirección, barrio, precio, dormitorios, ambientes, características y URLs de media (`foto_principal`, `url_link_fotos`, `url_link_video`, `Tour_360` cuando existan), **cacheado en memoria** (TTL para Sheets, mtime para CSV).
+- El bloque del **system prompt** usa formato **compacto por rama**: en **compra** (Lugar/Zona, precio USD, sin expensas ni tour); en **alquiler** (Barrio, precio mensual ARS, expensas/garantías si existen, flags `media:` sin URLs largas). **Cacheado en memoria** (TTL Sheets, mtime CSV).
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
 - El LLM elige cuáles mencionar según la consulta (entre las filas ya filtradas por disponibilidad).
 

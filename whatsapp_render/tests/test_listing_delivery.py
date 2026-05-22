@@ -41,7 +41,7 @@ def test_strip_listado_tags() -> None:
 
 
 def test_listado_skips_detail_delivery() -> None:
-    msg = "[LISTADO:4,2]\n\n¿Cuál te llama más la atención?"
+    msg = "[LISTADO:1,8]\n\n¿Cuál te llama más la atención?"
 
     async def _run() -> None:
         with (
@@ -74,9 +74,9 @@ def test_listado_skips_detail_delivery() -> None:
 
 
 def test_get_properties_by_ids_preserves_order() -> None:
-    rows = get_properties_by_ids(TENANT_RENT, ["3", "4", "99"])
+    rows = get_properties_by_ids(TENANT_RENT, ["8", "4", "99"])
     ids = [str(r.get("ID")) for r in rows]
-    assert ids == ["3", "4"]
+    assert ids == ["8", "4"]
 
 
 def test_build_listing_caption_includes_location_and_tour() -> None:
@@ -130,7 +130,7 @@ def test_deliver_bot_response_single_text_without_tag() -> None:
 def test_deliver_bot_response_multi_image_with_tag() -> None:
     msg = (
         "¡Perfecto! Te comparto opciones:\n\n"
-        "[LISTADO:4,2]\n\n"
+        "[LISTADO:1,8]\n\n"
         "¿Cuál te llama más la atención?"
     )
 

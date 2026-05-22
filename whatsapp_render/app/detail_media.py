@@ -675,6 +675,7 @@ async def try_deliver_single_property_visual(
         intro=intro_part,
         tail=tail_part,
         catalog_csv_path=catalog_csv_path,
+        branch=flow_path,
     )
 
     primary = primary_photo_url(row)

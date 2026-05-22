@@ -14,6 +14,11 @@ _AVAILABLE_VALUES = frozenset(
     {"si", "sí", "s", "yes", "y", "1", "true", "verdadero", "x", "disponible"}
 )
 
+from app.catalog_profiles import (
+    format_catalog_compact_for_branch,
+    match_fields_for_branch,
+    search_fields_for_branch,
+)
 from app.catalog_sources import (
     CatalogRef,
     fetch_rows,
@@ -238,13 +243,22 @@ def field_matches_reference(reference_norm: str, field_value: str) -> bool:
     return any(len(t) >= 5 and t in reference_norm for t in tokens)
 
 
+def _all_match_fields() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            match_fields_for_branch("compra") + match_fields_for_branch("alquiler")
+        )
+    )
+
+
 def find_property_row_for_user_text(
     catalog_csv_path: str | None,
     text: str,
     *,
+    branch: str | None = None,
     rows_scope: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Mejor fila cuyo título/dirección/barrio coincide con el texto del usuario."""
+    """Mejor fila cuyo título/dirección/ubicación coincide con el texto del usuario."""
     blob_norm = _normalize_match_text(text)
     if len(blob_norm) < 4:
         return None
@@ -254,12 +268,18 @@ def find_property_row_for_user_text(
     else:
         rows_iter = list(_load_rows(_ref_for_path(catalog_csv_path)))
 
+    fields = (
+        match_fields_for_branch(branch)
+        if branch
+        else _all_match_fields()
+    )
+
     best: dict[str, Any] | None = None
     best_len = 0
     for row in rows_iter:
         if rows_scope is None and not _row_available_for_id_lookup(row):
             continue
-        for field in ("Titulo", "Direccion", "Barrio"):
+        for field in fields:
             val = str(row.get(field, "")).strip()
             if not field_matches_reference(blob_norm, val):
                 continue
@@ -293,7 +313,7 @@ def get_property_row_by_ref(
     for row in _load_rows(catalog_ref):
         if not _row_available_for_id_lookup(row):
             continue
-        for field in ("Titulo", "Direccion", "Barrio"):
+        for field in _all_match_fields():
             val = str(row.get(field, "")).strip()
             if not field_matches_reference(ref_norm, val):
                 continue
@@ -322,63 +342,43 @@ def _media_suffix_parts(row: dict[str, Any]) -> str:
     return " | " + " | ".join(parts)
 
 
-def format_catalog_compact(hits: List[Dict[str, Any]]) -> str:
-    lines = []
-    for row in hits:
-        media_part = _media_suffix_parts(row)
-        lines.append(
-            "{ID} | {Titulo} | {Direccion} | {Barrio} | {Precio} | "
-            "Dormitorios: {Dormitorios} | {Ambientes} | "
-            "Caracteristicas: {Caracteristicas}{media_part}".format(
-                ID=row.get("ID", ""),
-                Titulo=row.get("Titulo", ""),
-                Direccion=row.get("Direccion", ""),
-                Barrio=row.get("Barrio", ""),
-                Precio=row.get("Precio", ""),
-                Dormitorios=row.get("Dormitorios", ""),
-                Ambientes=row.get("Ambientes", ""),
-                Caracteristicas=row.get("Caracteristicas", ""),
-                media_part=media_part,
-            )
-        )
-    return "\n".join(lines)
+def format_catalog_compact(
+    hits: List[Dict[str, Any]],
+    *,
+    branch: str = "compra",
+) -> str:
+    """Compat: delega al formateador por rama."""
+    return format_catalog_compact_for_branch(hits, branch)
 
 
-def format_catalog(hits: List[Dict[str, Any]]) -> str:
-    lines = []
-    for row in hits:
-        lines.append(
-            "ID {ID} | {Titulo} | {Direccion} | {Barrio} | {Precio} | "
-            "Dormitorios: {Dormitorios} | {Ambientes} | "
-            "Caracteristicas: {Caracteristicas} | foto_principal: {foto_principal}".format(
-                ID=row.get("ID", ""),
-                Titulo=row.get("Titulo", ""),
-                Direccion=row.get("Direccion", ""),
-                Barrio=row.get("Barrio", ""),
-                Precio=row.get("Precio", ""),
-                Dormitorios=row.get("Dormitorios", ""),
-                Ambientes=row.get("Ambientes", ""),
-                Caracteristicas=row.get("Caracteristicas", ""),
-                foto_principal=primary_photo_url(row),
-            )
-        )
-    return "\n".join(lines)
+def format_catalog(
+    hits: List[Dict[str, Any]],
+    *,
+    branch: str = "compra",
+) -> str:
+    return format_catalog_compact_for_branch(hits, branch)
 
 
 def get_cached_compact_catalog(
     catalog_csv_path: str | None,
+    *,
+    branch: str = "compra",
 ) -> tuple[int, str]:
     rows = load_properties_for_catalog_path(catalog_csv_path)
-    text = format_catalog_compact(rows)
+    text = format_catalog_compact_for_branch(rows, branch)
     if not text:
         return 0, "(catálogo vacío o no disponible.)"
     return len(rows), text
 
 
-def get_catalog_search_terms(catalog_csv_path: str | None) -> frozenset[str]:
+def get_catalog_search_terms(
+    catalog_csv_path: str | None,
+    *,
+    branch: str = "compra",
+) -> frozenset[str]:
     terms: set[str] = set()
     for row in load_properties_for_catalog_path(catalog_csv_path):
-        for field in ("ID", "Titulo", "Direccion", "Barrio", "Dormitorios"):
+        for field in search_fields_for_branch(branch):
             raw = str(row.get(field, "")).lower().strip()
             if not raw:
                 continue
@@ -396,10 +396,10 @@ def get_catalog_for_flow(
     branch = (flow_path or "").strip().lower()
     if branch == "compra":
         used = (catalog_sale_path or "").strip() or None
-        count, block = get_cached_compact_catalog(catalog_sale_path)
+        count, block = get_cached_compact_catalog(catalog_sale_path, branch="compra")
         return count, block, used
     if branch == "alquiler":
         used = resolve_rent_catalog_path(catalog_sale_path, catalog_rent_path)
-        count, block = get_cached_compact_catalog(used)
+        count, block = get_cached_compact_catalog(used, branch="alquiler")
         return count, block, used
     return 0, "", None

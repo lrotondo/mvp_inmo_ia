@@ -1,21 +1,7 @@
-ID,Direccion,Barrio,Precio,Ambientes,Caracteristicas,Link_Fotos,Tour_360
-1,Rodriguez 400,Centro,115000,2,Apto credito - Luminoso - Balcon al frente - A metros de la plaza principal,https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800,
-2,Av. Bolivar 600,Cerrito,195000,3,Amenities - Piscina - Cochera fija - Hermosa vista al Cerrito de la Franco,https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800,
-3,Pinto 1100,Centro,82000,1,Monoambiente divisible - Ideal estudiantes UNICEN - Excelente ubicacion,https://images.unsplash.com/photo-1536376072261-38c75010e6c9?w=800,
-4,Av. Don Bosco 1800,Don Bosco,380000,4,Zona residencial - Amplio jardin - Pileta - Vista panoramica a las sierras,https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=800,
-5,Arana 200,Estacion,98000,2,Bajas expensas - Planta baja - Patio propio pequeño con parilla - Muy seguro,https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800,
-6,Belgrano 300,Centro,125000,3,Semipiso - Cocina independiente - Lavadero - Calefaccion por radiadores,https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800,
-7,Sarmiento 1200,Terminal,140000,3,Edificio moderno - Cochera descubierta - Balcon terraza - Excelente entorno,https://images.unsplash.com/photo-1545464693-f1798a373343?w=800,
-8,Pasaje 1° de Mayo 1100,Villa Italia,72000,2,Casa interna - Entrada independiente - Sin expensas - Ideal inversion,https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800,
-9,Chacabuco 100,Centro,240000,4,Casa antigua reciclada a nuevo - Garaje - Patio - Ideal uso profesional o vivienda,https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800,
-10,Estrada 200,Graduados,290000,3,Casa moderna en dos plantas - Lote amplio - Entrada de autos - Quincho,https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?w=800,
-11,San Martin 200,Centro,380000,2,Alquiler - Expensas $25000 - Admite mascota pequeña - Ajuste cuatrimestral IPC,https://images.unsplash.com/photo-1502005229762-fc1b2b812ca5?w=800,
-12,Alem 700,Centro,450000,3,Alquiler - Expensas $35000 - Solo garantia propietaria Tandil - Luminoso,https://images.unsplash.com/photo-1527030280862-64139fbe04ca?w=800,
-13,Av. Marconi 1500,Terminal,360000,2,Alquiler - Expensas $18000 - Acepta seguro de caucion - Cercano a comercios,https://images.unsplash.com/photo-1505691938895-1758d7feb511?w=800,
-14,Av. España 400,Centro,520000,3,Alquiler - Cochera techada incluida - Expensas $40000 - No admite mascotas,https://images.unsplash.com/photo-1556912172-45b7abe8b7e1?w=800,
-15,Mitre 900,Centro,320000,1,Alquiler - Monoambiente - Expensas $15000 - Ideal estudiantes - Muy seguro,https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=800,
-16,Quintana 400,Villa Italia,390000,3,Alquiler - Casa al frente - Sin expensas - Patio chico con verde - Lavadero,https://images.unsplash.com/photo-1531835551805-16d864c8d311?w=800,
-17,General Paz 1200,Estacion,340000,2,Alquiler - Complejo de deptos - Planta baja - Bajas expensas $12000,https://images.unsplash.com/photo-1560185007-c5ca9d2c014d?w=800,
-18,Av. Santamarina 300,Centro,600000,3,Alquiler - Piso de categoria - Expensas $55000 - Cochera doble - Vigilancia,https://images.unsplash.com/photo-1616486338812-3dadae4b4ace?w=800,
-19,Maipu 800,Centro,370000,2,Alquiler - Expensas $22000 - Planta alta por escalera - Muy silencioso,https://images.unsplash.com/photo-1617806118233-18e1db207f62?w=800,
-20,Sáenz Peña 1400,Graduados,480000,2,Alquiler - Depto tipo casa - Primer piso - Terraza propia con parrilla,https://images.unsplash.com/photo-1618219908412-a29a1bb7b86e?w=800,
+ID,Titulo,Tipo,Direccion,Barrio,Precio,Disponible,Dormitorios,Ambientes,Caracteristicas,Foto_principal,Tour_360,url_link_fotos,url_link_video
+1,Depto luminoso Centro,Departamento,Rodriguez 400,Centro,115000,si,2,2,Apto credito - Luminoso - Balcon al frente,https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800,,https://www.instagram.com/p/example1/,https://example.com/video1.mp4
+4,Depto Don Bosco,Departamento,Av. Don Bosco 1800,Don Bosco,380000,si,4,4,Zona residencial - Pileta - Vista panoramica,https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=800,,,
+5,Casa Arana 200,Casa,Arana 200,Estacion,98000,si,2,2,Bajas expensas - Patio con parilla,https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800,,https://www.instagram.com/p/arana/,https://example.com/video5.mp4
+8,Casa Villa Italia,Casa,Pasaje 1° de Mayo 1100,Villa Italia,72000,si,2,2,Casa interna - Entrada independiente,https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800,,,
+9,Duplex Chacabuco,Duplex,Chacabuco 1000,Centro,850000,si,2,2,Living comedor - Cocina - Patio - Dos habitaciones,https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800,,https://www.instagram.com/p/example9/,https://example.com/video9.mp4
+10,Casa Graduados,Casa,Estrada 200,Graduados,290000,no,3,3,Casa moderna en dos plantas - Quincho,https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?w=800,,,

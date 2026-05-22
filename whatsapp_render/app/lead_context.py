@@ -280,6 +280,7 @@ def _property_ref_from_blob_norm(
             candidates: list[str] = []
             row_id = str(row.get("ID", "")).strip()
             titulo = str(row.get("Titulo", "")).strip()
+            tipo = str(row.get("Tipo", "")).strip()
             direccion = str(row.get("Direccion", "")).strip()
             barrio = str(row.get("Barrio", "")).strip()
             if row_id:
@@ -287,6 +288,8 @@ def _property_ref_from_blob_norm(
                 candidates.append(f"ID {row_id}")
             if titulo:
                 candidates.append(titulo)
+            if tipo and len(tipo) >= 5:
+                candidates.append(tipo)
             if direccion:
                 candidates.append(direccion)
             if barrio and len(barrio) >= 5 and not skip_barrio:

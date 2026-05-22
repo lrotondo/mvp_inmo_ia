@@ -183,8 +183,11 @@ def should_run_lead_classifier(
     current_user_text: str,
     history: list[HistoryTurn],
     catalog_csv_path: str | None,
+    *,
+    flow_path: str = "compra",
 ) -> bool:
-    terms = get_catalog_search_terms(catalog_csv_path)
+    branch = (flow_path or "compra").strip().lower()
+    terms = get_catalog_search_terms(catalog_csv_path, branch=branch)
     if _text_has_lead_signals(current_user_text, terms):
         return True
     for turn in history:
@@ -667,7 +670,9 @@ async def try_register_lead(
     catalog_for_signals = (
         catalog_rent_csv_path if branch == "alquiler" else catalog_csv_path
     )
-    if not should_run_lead_classifier(current_user_text, history, catalog_for_signals):
+    if not should_run_lead_classifier(
+        current_user_text, history, catalog_for_signals, flow_path=branch
+    ):
         logger.info("Lead omitido (sin señales en mensaje/historial) wa_id=%s", wa_id)
         return
 

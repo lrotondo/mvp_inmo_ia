@@ -39,7 +39,7 @@ FAKE_ROW = {
 
 def test_tenant_catalog_loads_without_disponible_column() -> None:
     rows = load_properties_for_catalog_path(TENANT_RENT)
-    assert len(rows) >= 5
+    assert len(rows) >= 3
 
 
 def test_extract_property_ref_arana_from_user_text() -> None:

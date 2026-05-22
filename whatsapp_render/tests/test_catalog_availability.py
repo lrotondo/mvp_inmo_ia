@@ -98,11 +98,11 @@ class TestFormatCatalogCompact(unittest.TestCase):
             "Ambientes": "2 ambientes",
             "Caracteristicas": "Luminoso",
         }
-        text = format_catalog_compact([row])
-        self.assertIn("Depto luminoso", text)
+        text = format_catalog_compact([row], branch="alquiler")
+        self.assertIn("Titulo: Depto luminoso", text)
         self.assertIn("Dormitorios: 2", text)
 
-    def test_compact_line_includes_galeria_and_video(self) -> None:
+    def test_compact_line_rent_media_flags_without_urls(self) -> None:
         row = {
             "ID": "9",
             "Direccion": "Test 1",
@@ -114,9 +114,10 @@ class TestFormatCatalogCompact(unittest.TestCase):
             "url_link_fotos": "https://example.com/galeria",
             "url_link_video": "https://example.com/video",
         }
-        text = format_catalog_compact([row])
-        self.assertIn("url_link_fotos: https://example.com/galeria", text)
-        self.assertIn("Video: https://example.com/video", text)
+        text = format_catalog_compact([row], branch="alquiler")
+        self.assertIn("media: tiene_foto", text)
+        self.assertNotIn("https://example.com/galeria", text)
+        self.assertNotIn("https://example.com/video", text)
 
 
 class TestHeaderAliases(unittest.TestCase):
@@ -128,9 +129,17 @@ class TestHeaderAliases(unittest.TestCase):
         self.assertEqual(rows[0]["Titulo"], "Casa 3 dorm")
         self.assertEqual(rows[0]["Dormitorios"], "3")
 
+    def test_tipo_header(self) -> None:
+        rows = rows_from_csv_text(
+            "ID,Titulo,Tipo,Direccion,Barrio,Precio,Disponible,Dormitorios,Ambientes,"
+            "Caracteristicas,Foto_principal\n"
+            "1,Depto X,Departamento,Calle 1,Centro,100,si,2,2,Luminoso,https://example.com/p.jpg\n"
+        )
+        self.assertEqual(rows[0]["Tipo"], "Departamento")
+
     def test_foto_principal_header(self) -> None:
         rows = rows_from_csv_text(
-            "ID,Direccion,Barrio,Precio,Ambientes,Caracteristicas,disponible,foto_principal\n"
+            "ID,Direccion,Barrio,Precio,Ambientes,Caracteristicas,disponible,Foto_principal\n"
             "1,Calle 1,Centro,100,2,,si,https://example.com/principal\n"
         )
         self.assertEqual(rows[0]["foto_principal"], "https://example.com/principal")
@@ -169,6 +178,43 @@ class TestLoadPropertiesIntegration(unittest.TestCase):
             "data/tenants/inmobiliaria_cowork_alquiler.csv"
         )
         self.assertIsInstance(props, list)
+        ids = {str(p.get("ID", "")) for p in props}
+        self.assertIn("1", ids)
+        self.assertIn("9", ids)
+        self.assertNotIn("10", ids)
+
+    def test_alquiler_full_schema_headers(self) -> None:
+        csv_text = (
+            "ID,Titulo,Tipo,Direccion,Barrio,Precio,Disponible,Dormitorios,Ambientes,"
+            "Caracteristicas,Foto_principal,Tour_360,url_link_fotos,url_link_video\n"
+            "5,Duplex test,Duplex,Chacabuco 1000,Centro,850000,si,2,2,"
+            "Patio,https://example.com/p.jpg,,https://instagram.com/p/x,"
+            "https://example.com/v.mp4\n"
+        )
+        rows = rows_from_csv_text(csv_text)
+        self.assertEqual(rows[0]["Tipo"], "Duplex")
+        self.assertEqual(rows[0]["foto_principal"], "https://example.com/p.jpg")
+        self.assertEqual(rows[0]["url_link_fotos"], "https://instagram.com/p/x")
+        self.assertEqual(rows[0]["url_link_video"], "https://example.com/v.mp4")
+
+    def test_format_catalog_compact_includes_tipo(self) -> None:
+        from app.catalog import format_catalog_compact
+
+        row = {
+            "ID": "9",
+            "Titulo": "Duplex Chacabuco",
+            "Tipo": "Duplex",
+            "Direccion": "Chacabuco 1000",
+            "Barrio": "Centro",
+            "Precio": "850000",
+            "Dormitorios": "2",
+            "Ambientes": "2",
+            "Caracteristicas": "Patio",
+            "foto_principal": "https://example.com/p.jpg",
+        }
+        text = format_catalog_compact([row], branch="alquiler")
+        self.assertIn("Tipo: Duplex", text)
+        self.assertIn("Titulo: Duplex Chacabuco", text)
 
 
 if __name__ == "__main__":
