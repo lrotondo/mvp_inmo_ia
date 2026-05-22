@@ -23,6 +23,7 @@ def test_search_profile_complete_after_bare_range() -> None:
     capture = append_user_flow_message(
         capture, "alquiler", "sin preferencia de zona"
     )
+    capture["intake_step"] = 3
     profile = build_search_profile(capture, "2 ó 3", "alquiler")
-    assert "dormitorios" not in profile.missing_fields
+    assert profile.is_complete
     assert profile.min_bedrooms == 2

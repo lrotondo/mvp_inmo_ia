@@ -12,6 +12,9 @@ from app.catalog_search import (
 )
 from app.bedroom_intake import bedroom_signal_in_text, parse_bedroom_count
 from app.capture_flow import user_messages_for_flow
+from app.listing_context import user_requests_fresh_listing
+
+_INTAKE_STEP_KEY = "intake_step"
 
 _NO_DEFINED_ZONE_RE = re.compile(
     r"\b("
@@ -27,40 +30,6 @@ _NO_DEFINED_ZONE_RE = re.compile(
     r")\b",
     re.I,
 )
-
-_BEDROOM_SIGNAL_RE = re.compile(
-    r"\b("
-    r"\d+\s*(?:ó|o|or|y|a|-)\s*\d+\b|"
-    r"\d+\s*(?:ó|o|or|y)\s*m[aá]s\s*dormitorios?|"
-    r"m[aá]s\s+de\s+\d+\s*dorm(?:itorios?)?|"
-    r"\d+\s*\+\s*dorm(?:itorios?)?|"
-    r"\d+\s*(?:dormitorios?|dorm\.?|ambientes?)|"
-    r"mono\s*amb(?:iente)?|"
-    r"(?:un|una|dos|tres|cuatro|cinco|seis)\s+dormitorios?|"
-    r"(?:un|una|dos|tres|cuatro)\s+ambientes?"
-    r")\b",
-    re.I,
-)
-
-_BUDGET_USD_RE = re.compile(
-    r"(?:"
-    r"us\s*\$?\s*[\d.,]+|"
-    r"usd\s*[\d.,]+|"
-    r"\$\s*[\d.,]+\s*(?:usd|d[oó]lares?)?|"
-    r"presupuesto\s*(?:de\s+)?[\d.,]+|"
-    r"tengo\s+[\d.,]{4,}|"
-    r"[\d]{2,3}[.,]?\d{3}\s*(?:usd|d[oó]lares?)?"
-    r")",
-    re.I,
-)
-
-
-def user_declined_zone_preference(user_messages_text: str) -> bool:
-    return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
-
-
-def user_has_budget_usd(user_messages_text: str) -> bool:
-    return bool(_BUDGET_USD_RE.search(user_messages_text))
 
 CatalogBranch = Literal["compra", "alquiler"]
 PropertyType = Literal["casa", "departamento"]
@@ -88,6 +57,58 @@ _FIELD_QUESTIONS: dict[str, dict[str, str]] = {
 }
 
 
+def intake_field_order(branch: str) -> tuple[str, ...]:
+    path = (branch or "").strip().lower()
+    if path == "compra":
+        return _INTAKE_ORDER_COMPRA
+    if path == "alquiler":
+        return _INTAKE_ORDER_ALQUILER
+    return ()
+
+
+def get_intake_step(capture_data: dict[str, Any] | None) -> int:
+    try:
+        return max(0, int((capture_data or {}).get(_INTAKE_STEP_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def reset_intake_step(capture_data: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(capture_data)
+    merged[_INTAKE_STEP_KEY] = 0
+    return merged
+
+
+def bump_intake_step(capture_data: dict[str, Any], branch: str) -> dict[str, Any]:
+    """Avanza un paso tras cada respuesta del usuario en compra/alquiler."""
+    merged = dict(capture_data)
+    order = intake_field_order(branch)
+    if not order:
+        return merged
+    step = get_intake_step(merged)
+    if step < len(order):
+        merged[_INTAKE_STEP_KEY] = step + 1
+    return merged
+
+
+def user_declined_zone_preference(user_messages_text: str) -> bool:
+    return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
+
+
+def is_intake_script_done(
+    capture_data: dict[str, Any] | None,
+    branch: str,
+    *,
+    current_user_text: str = "",
+) -> bool:
+    if user_requests_fresh_listing((current_user_text or "").strip()):
+        return True
+    order = intake_field_order(branch)
+    if not order:
+        return True
+    return get_intake_step(capture_data) >= len(order)
+
+
 @dataclass
 class SearchProfile:
     branch: CatalogBranch
@@ -96,11 +117,21 @@ class SearchProfile:
     max_price_usd: int | None = None
     any_zone: bool = False
     zone_tokens: tuple[str, ...] = ()
-    missing_fields: tuple[str, ...] = ()
+    intake_step: int = 0
+    intake_complete: bool = False
 
     @property
     def is_complete(self) -> bool:
-        return len(self.missing_fields) == 0
+        return self.intake_complete
+
+    @property
+    def missing_fields(self) -> tuple[str, ...]:
+        """Campos de guía que faltan (solo para compat en tests/logs)."""
+        if self.intake_complete:
+            return ()
+        order = intake_field_order(self.branch)
+        step = min(self.intake_step, len(order))
+        return order[step:]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +141,8 @@ class SearchProfile:
             "max_price_usd": self.max_price_usd,
             "any_zone": self.any_zone,
             "zone_tokens": list(self.zone_tokens),
+            "intake_step": self.intake_step,
+            "intake_complete": self.intake_complete,
             "missing_fields": list(self.missing_fields),
         }
 
@@ -127,7 +160,11 @@ class SearchProfile:
             zone_tokens: tuple[str, ...] = (zone_raw,) if zone_raw else ()
         else:
             zone_tokens = tuple(str(z) for z in zone_raw if str(z).strip())
-        missing = tuple(str(m) for m in (data.get("missing_fields") or []))
+        intake_complete = bool(data.get("intake_complete"))
+        if not intake_complete and not data.get("missing_fields"):
+            intake_complete = True
+        elif data.get("missing_fields") is not None and not intake_complete:
+            intake_complete = len(data.get("missing_fields") or []) == 0
         return cls(
             branch=branch,  # type: ignore[arg-type]
             property_type=property_type,
@@ -135,11 +172,12 @@ class SearchProfile:
             max_price_usd=data.get("max_price_usd"),
             any_zone=bool(data.get("any_zone")),
             zone_tokens=zone_tokens,
-            missing_fields=missing,
+            intake_step=int(data.get("intake_step") or 0),
+            intake_complete=intake_complete,
         )
 
     def criteria_blob(self) -> str:
-        """Texto sintético para reutilizar filtros de catálogo."""
+        """Texto sintético para filtros de catálogo (recompilado del perfil)."""
         parts: list[str] = []
         if self.property_type:
             parts.append(self.property_type)
@@ -154,9 +192,13 @@ class SearchProfile:
         return " ".join(parts)
 
     def next_question(self) -> str | None:
-        if not self.missing_fields:
+        if self.intake_complete:
             return None
-        field_name = self.missing_fields[0]
+        order = intake_field_order(self.branch)
+        step = min(self.intake_step, len(order) - 1) if order else 0
+        if step >= len(order):
+            return None
+        field_name = order[step]
         return _FIELD_QUESTIONS.get(field_name, {}).get(self.branch)
 
 
@@ -167,12 +209,14 @@ def build_search_profile(
 ) -> SearchProfile:
     branch = (flow_path or "compra").strip().lower()
     if branch not in ("compra", "alquiler"):
-        return SearchProfile(branch="compra", missing_fields=_INTAKE_ORDER_COMPRA)
+        return SearchProfile(branch="compra", intake_complete=True)
 
-    existing = load_search_profile_from_capture(capture_data or {}, branch=branch)
+    step = get_intake_step(capture_data)
+    intake_done = is_intake_script_done(
+        capture_data, branch, current_user_text=current_user_text
+    )
+
     blob = user_messages_for_flow(current_user_text, flow_path, capture_data)
-    if existing and existing.criteria_blob():
-        blob = f"{existing.criteria_blob()} {blob}".strip()
     criteria = parse_search_criteria(blob, branch=branch)
 
     property_type: PropertyType | None = None
@@ -185,35 +229,29 @@ def build_search_profile(
         or _parse_min_bedrooms(blob)
         or parse_bedroom_count(current_only)
     )
-    any_zone = criteria.any_zone or user_declined_zone_preference(blob)
-    has_zone = any_zone or bool(criteria.zone_tokens)
-    has_beds = (
-        min_beds > 0
-        or bool(_BEDROOM_SIGNAL_RE.search(blob))
-        or bedroom_signal_in_text(current_only)
-    )
+    if min_beds <= 0 and re.fullmatch(r"\d{1,2}", current_only):
+        min_beds = int(current_only)
+    if min_beds <= 0:
+        for line in reversed(blob.split("\n")):
+            stripped = line.strip()
+            if re.fullmatch(r"\d{1,2}", stripped):
+                min_beds = int(stripped)
+                break
 
-    missing: list[str] = []
-    order = _INTAKE_ORDER_COMPRA if branch == "compra" else _INTAKE_ORDER_ALQUILER
-    for field_name in order:
-        if field_name == "tipo" and not property_type:
-            missing.append("tipo")
-        elif field_name == "zona" and not has_zone:
-            missing.append("zona")
-        elif field_name == "dormitorios" and not has_beds:
-            missing.append("dormitorios")
-        elif field_name == "presupuesto" and branch == "compra":
-            if not user_has_budget_usd(blob) and criteria.max_price_usd is None:
-                missing.append("presupuesto")
+    any_zone = criteria.any_zone or user_declined_zone_preference(blob)
+    zone_tokens = criteria.zone_tokens
+    if intake_done and not any_zone and not zone_tokens:
+        any_zone = True
 
     return SearchProfile(
         branch=branch,  # type: ignore[arg-type]
         property_type=property_type,
-        min_bedrooms=min_beds if has_beds else 0,
+        min_bedrooms=min_beds,
         max_price_usd=criteria.max_price_usd,
         any_zone=any_zone,
-        zone_tokens=criteria.zone_tokens,
-        missing_fields=tuple(missing),
+        zone_tokens=zone_tokens,
+        intake_step=step,
+        intake_complete=intake_done,
     )
 
 
@@ -259,4 +297,3 @@ def load_search_profile_from_capture(
     if profile.branch != path:
         return None
     return profile
-

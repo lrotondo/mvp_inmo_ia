@@ -49,6 +49,7 @@ def test_listado_skips_detail_delivery() -> None:
             patch(
                 "app.listing_delivery.try_deliver_single_property_visual",
                 new_callable=AsyncMock,
+                return_value=None,
             ) as mock_detail,
             patch(
                 "app.listing_delivery.send_whatsapp_text_message",
@@ -67,6 +68,7 @@ def test_listado_skips_detail_delivery() -> None:
                 catalog_csv_path=TENANT_RENT,
                 current_user_text="cualquier zona, departamento, 2 dormitorios",
                 flow_path="alquiler",
+                capture_data={"intake_step": 3},
             )
             mock_detail.assert_not_awaited()
             assert mock_image.await_count >= 1
@@ -138,6 +140,11 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
     async def _run() -> None:
         with (
             patch(
+                "app.listing_delivery.try_deliver_single_property_visual",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "app.listing_delivery.send_whatsapp_text_message",
                 new_callable=AsyncMock,
             ) as mock_text,
@@ -154,6 +161,7 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
                 catalog_csv_path=TENANT_RENT,
                 current_user_text="en en centro, departamento, 2 dormitorios",
                 flow_path="alquiler",
+                capture_data={"intake_step": 3},
             )
             assert mock_text.await_count >= 2
             assert mock_image.await_count == 2

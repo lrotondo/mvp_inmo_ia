@@ -283,7 +283,7 @@ Lógica en [`app/conversation_flow.py`](app/conversation_flow.py) (fachada: [`ap
 | Fase | Comportamiento | LLM |
 |------|----------------|-----|
 | Triage (`nuevo`) | Mensaje fijo: comprar / alquilar / vender | No |
-| Intake (`compra`/`alquiler`) | Preguntas de [`search_profile.py`](app/search_profile.py) | No |
+| Intake (`compra`/`alquiler`) | Guía por pasos (tipo → zona → dormitorios → presupuesto en compra); **no valida** cada respuesta, avanza por turno | No |
 | Listado | Intro fija + `[LISTADO:ids]` + fotos (backend) | No |
 | Preguntas sobre opciones ya mostradas | Respuesta con datos compactos de las 3 opciones | DeepSeek (prompt mínimo) |
 | Detalle (`opción N`, fotos, elección) | Intro fija + ficha/media | No |

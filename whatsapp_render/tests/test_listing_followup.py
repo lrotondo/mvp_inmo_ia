@@ -16,7 +16,8 @@ def _complete_profile() -> SearchProfile:
         property_type="departamento",
         min_bedrooms=2,
         any_zone=True,
-        missing_fields=(),
+        intake_complete=True,
+        intake_step=3,
     )
 
 

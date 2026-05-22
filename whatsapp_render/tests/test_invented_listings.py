@@ -19,6 +19,7 @@ def test_profile_ready_casa_alquiler_sin_zona() -> None:
     capture = append_user_flow_message(
         {}, "alquiler", "busco casa 2 o 3 dormitorios en alquiler"
     )
+    capture["intake_step"] = 3
     assert user_search_profile_ready(
         "quiero ver ideas, no tengo zonas preferidas",
         "alquiler",

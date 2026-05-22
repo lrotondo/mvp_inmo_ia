@@ -50,11 +50,14 @@ def test_plan_turn_listing_has_candidates() -> None:
         flow_path="alquiler",
         catalog_sale_path=None,
         catalog_rent_path=str(_RENT_CSV),
-        capture_data=append_user_flow_message(
-            {},
-            "alquiler",
-            "casa 2 dormitorios sin preferencia de zona",
-        ),
+        capture_data={
+            **append_user_flow_message(
+                {},
+                "alquiler",
+                "casa 2 dormitorios sin preferencia de zona",
+            ),
+            "intake_step": 3,
+        },
     )
     plan = plan_turn(ctx, "ver ideas")
     assert plan.kind == TurnKind.LISTING

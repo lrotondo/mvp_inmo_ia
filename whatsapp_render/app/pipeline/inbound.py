@@ -33,7 +33,6 @@ async def process_inbound_message(
     user_text: str,
     flow_just_switched: bool,
 ) -> InboundTurnResult:
-    _ = flow_just_switched
     result = await handle_turn(
         tenant_name=ctx.name or "la inmobiliaria",
         flow_path=flow_path,
@@ -43,6 +42,7 @@ async def process_inbound_message(
         capture_data=dict(session.capture_data),
         user_text=user_text,
         session_flow_path=session.flow_path,
+        flow_just_switched=flow_just_switched,
     )
 
     logger.info(

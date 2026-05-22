@@ -62,6 +62,25 @@ _ZONE_TOKEN_RE = re.compile(
     r"\b(?:en|zona|barrio)\s+([a-záéíóúñ][a-záéíóúñ\s]{2,})",
     re.I,
 )
+_CERCA_DE_RE = re.compile(
+    r"\bcerca\s+(?:del?|de\s+la|de\s+el|de)\s+([a-záéíóúñ][a-záéíóúñ\s]{2,24})",
+    re.I,
+)
+_KNOWN_ZONE_PHRASES: tuple[str, ...] = (
+    "microcentro",
+    "micro centro",
+    "centro",
+    "calvario",
+    "estadio",
+    "terminal",
+    "norte",
+    "sur",
+    "oeste",
+    "este",
+    "los nogales",
+    "villa urquiza",
+    "country",
+)
 
 
 @dataclass(frozen=True)
@@ -186,17 +205,40 @@ _ZONE_TOKEN_STOPWORDS = frozenset(
 )
 
 
+def _normalize_zone_token(raw: str) -> str:
+    token = raw.strip().lower()
+    token = token.split("\n")[0].strip()
+    token = re.sub(r"\s+", " ", token)
+    return token
+
+
+def _append_zone_token(tokens: list[str], raw: str) -> None:
+    token = _normalize_zone_token(raw)
+    if len(token) < 3 or len(token) > 32:
+        return
+    if token in _ZONE_TOKEN_STOPWORDS:
+        return
+    if token not in tokens:
+        tokens.append(token)
+
+
 def _parse_zone_tokens(blob: str) -> tuple[str, ...]:
     tokens: list[str] = []
-    for match in _ZONE_TOKEN_RE.finditer(blob):
-        token = match.group(1).strip().lower()
-        token = token.split("\n")[0].strip()
-        if len(token) < 3 or len(token) > 32:
-            continue
-        if token in _ZONE_TOKEN_STOPWORDS:
-            continue
-        if token not in tokens:
-            tokens.append(token)
+    text = (blob or "").strip()
+    if not text:
+        return ()
+
+    for match in _ZONE_TOKEN_RE.finditer(text):
+        _append_zone_token(tokens, match.group(1))
+
+    for match in _CERCA_DE_RE.finditer(text):
+        _append_zone_token(tokens, match.group(1))
+
+    lower = text.lower()
+    for phrase in sorted(_KNOWN_ZONE_PHRASES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(phrase)}\b", lower):
+            _append_zone_token(tokens, phrase)
+
     return tuple(tokens)
 
 

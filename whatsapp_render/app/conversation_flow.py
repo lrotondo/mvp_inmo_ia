@@ -40,7 +40,9 @@ from app.prompts.templates import (
 from app.search_profile import (
     SearchProfile,
     build_search_profile,
+    bump_intake_step,
     merge_search_profile_into_capture,
+    reset_intake_step,
 )
 from app.session_state import (
     capture_is_complete,
@@ -369,20 +371,25 @@ async def handle_turn(
     capture_data: dict[str, Any],
     user_text: str,
     session_flow_path: str,
+    flow_just_switched: bool = False,
 ) -> FlowResult:
     """Un turno completo: plan → texto → capture → alertas."""
+    working_capture = dict(capture_data)
+    if flow_just_switched and flow_path in ("compra", "alquiler"):
+        working_capture = reset_intake_step(working_capture)
+
     ctx = FlowContext(
         tenant_name=tenant_name,
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
         system_prompt_override=system_prompt_override,
-        capture_data=dict(capture_data),
+        capture_data=working_capture,
     )
     plan = plan_message(ctx, user_text)
     text = await build_reply(ctx, user_text, plan)
 
-    out_capture = dict(capture_data)
+    out_capture = dict(working_capture)
     if plan.profile and flow_path in ("compra", "alquiler"):
         out_capture = merge_search_profile_into_capture(out_capture, plan.profile)
 
@@ -429,6 +436,8 @@ async def handle_turn(
         text = format_visit_handoff(property_ref)
 
     out_capture = append_user_flow_message(out_capture, flow_path, user_text)
+    if flow_path in ("compra", "alquiler"):
+        out_capture = bump_intake_step(out_capture, flow_path)
 
     return FlowResult(
         text=text.strip(),
