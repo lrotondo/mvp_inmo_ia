@@ -244,13 +244,16 @@ def user_requests_fresh_listing(user_text: str) -> bool:
 
 
 def user_asks_about_shown_listing(user_text: str) -> bool:
-    """Pregunta sobre opciones ya mostradas (características, comparación, opción N)."""
+    """Pregunta sobre opciones ya mostradas (características, comparación)."""
     text = (user_text or "").strip()
     if not text or user_requests_fresh_listing(text):
         return False
+    has_followup = bool(_LISTING_FOLLOWUP_RE.search(text))
+    if not has_followup:
+        return False
     if _listing_index_from_text(text) is not None:
         return True
-    return bool(_LISTING_FOLLOWUP_RE.search(text))
+    return has_followup
 
 
 def build_listing_catalog_block(

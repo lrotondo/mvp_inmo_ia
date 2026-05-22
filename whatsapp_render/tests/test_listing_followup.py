@@ -38,6 +38,21 @@ def test_followup_not_listing_after_listado_in_history() -> None:
     assert kind == TurnKind.GENERAL
 
 
+def test_option_number_alone_is_detail_not_general() -> None:
+    history = [
+        HistoryTurn(role="assistant", content="[LISTADO:6,5,2]"),
+    ]
+    kind = resolve_turn_kind(
+        "alquiler",
+        profile=_complete_profile(),
+        current_user_text="la opcion 2",
+        history=history,
+        capture_data={"last_listing": {"ids": ["6", "5", "2"], "catalog_path": "x"}},
+        catalog_path_used="x",
+    )
+    assert kind == TurnKind.DETAIL
+
+
 def test_fresh_listing_request_stays_listing() -> None:
     history = [
         HistoryTurn(role="assistant", content="[LISTADO:1,2,3]"),

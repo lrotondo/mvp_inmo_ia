@@ -16,12 +16,14 @@ from app.detail_media import (
 from app.visit_intent import conversation_wants_visit, conversation_wants_visit_rent
 from app.listing_context import (
     build_listing_catalog_block,
+    history_contains_listado,
     listing_already_shown,
     load_last_listing_rows,
     user_asks_about_shown_listing,
     user_requests_fresh_listing,
     user_showed_property_selection,
 )
+from app.detail_media import _rows_from_recent_listado
 from app.property_matching import extract_property_ref
 from app.prompts.flow_master import build_turn_system_prompt
 from app.search_profile import (
@@ -266,8 +268,6 @@ async def generate_turn_reply(
         return build_intake_outbound(plan.profile)
 
     if plan.kind == TurnKind.DETAIL:
-        from app.listing_context import load_last_listing_rows
-
         rows = load_last_listing_rows(
             plan.catalog_path_used,
             ctx.capture_data,
@@ -281,15 +281,10 @@ async def generate_turn_reply(
             plan.catalog_path_used,
             ctx.capture_data,
         )
-        if not listing_rows:
-            from app.listing_context import history_contains_listado
-
-            if history_contains_listado(history):
-                from app.detail_media import _rows_from_recent_listado
-
-                listing_rows = _rows_from_recent_listado(
-                    history, plan.catalog_path_used
-                )
+        if not listing_rows and history_contains_listado(history):
+            listing_rows = _rows_from_recent_listado(
+                history, plan.catalog_path_used
+            )
         if listing_rows:
             branch = plan.profile.branch if plan.profile else ctx.flow_path
             catalog_block = build_listing_catalog_block(
