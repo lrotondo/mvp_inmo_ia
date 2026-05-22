@@ -11,7 +11,7 @@ from app.detail_media import (
     try_deliver_single_property_visual,
     user_wants_specific_property_detail,
 )
-from app.lead_context import user_search_profile_ready
+from app.search_profile import user_search_profile_ready
 from app.property_ficha import build_property_ficha
 from app.meta_client import (
     is_public_https_image_url,
@@ -176,7 +176,7 @@ def ensure_listado_from_candidates(
 def suppress_premature_catalog_outbound(
     message: str,
     *,
-    history: list | None,
+    capture_data: dict[str, Any] | None,
     current_user_text: str,
     flow_path: str,
 ) -> str:
@@ -185,9 +185,9 @@ def suppress_premature_catalog_outbound(
     El LLM a veces ignora el prompt; el backend no envía fotos ni IDs.
     """
     if user_search_profile_ready(
-        history or [],
         current_user_text,
         flow_path,
+        capture_data=capture_data,
     ):
         return strip_invented_listings(message)
 
@@ -312,7 +312,6 @@ async def deliver_bot_response(
     graph_version: str | None = None,
     current_user_text: str = "",
     flow_path: str = "compra",
-    history: list | None = None,
     catalog_sale_path: str | None = None,
     catalog_rent_path: str | None = None,
     property_ref: str = "",
@@ -320,12 +319,12 @@ async def deliver_bot_response(
 ) -> str:
     """
     Envía la respuesta al cliente. Listados con [LISTADO:ids] → intro + imágenes + cierre.
-    Retorna texto consolidado para historial / detección de handoff.
+    Retorna texto consolidado enviado al cliente.
     """
     body = (message or "").strip() or "No pude generar una respuesta en este momento."
     body = suppress_premature_catalog_outbound(
         body,
-        history=history,
+        capture_data=capture_data,
         current_user_text=current_user_text,
         flow_path=flow_path,
     )
@@ -344,7 +343,6 @@ async def deliver_bot_response(
             catalog_csv_path=catalog_csv_path,
             current_user_text=current_user_text,
             flow_path=flow_path,
-            history=history,
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
             property_ref=property_ref,
@@ -364,7 +362,6 @@ async def deliver_bot_response(
             catalog_csv_path=catalog_csv_path,
             current_user_text=current_user_text,
             flow_path=flow_path,
-            history=history,
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
             property_ref=property_ref,

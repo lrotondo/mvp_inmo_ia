@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from app.conversation import HistoryTurn
+from app.capture_flow import append_user_flow_message
 from app.catalog import load_properties_for_catalog_path
 from app.catalog_search import select_listing_candidates
-from app.lead_context import user_declined_zone_preference, user_search_profile_ready
+from app.catalog_search import user_declined_zone_preference
+from app.search_profile import user_search_profile_ready
 from app.listing_delivery import strip_invented_listings, ensure_listado_from_candidates
 
 SALE_CSV = "data/tenants/inmobiliaria_cowork.csv"
@@ -15,13 +16,13 @@ def test_zonas_preferidas_counts_as_any_zone() -> None:
 
 
 def test_profile_ready_casa_alquiler_sin_zona() -> None:
-    history = [
-        HistoryTurn(role="user", content="busco casa 2 o 3 dormitorios en alquiler"),
-    ]
+    capture = append_user_flow_message(
+        {}, "alquiler", "busco casa 2 o 3 dormitorios en alquiler"
+    )
     assert user_search_profile_ready(
-        history,
         "quiero ver ideas, no tengo zonas preferidas",
         "alquiler",
+        capture_data=capture,
     )
 
 

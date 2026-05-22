@@ -3,13 +3,13 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from app.catalog import field_matches_reference, find_property_row_for_user_text
-from app.conversation import HistoryTurn
+from app.capture_flow import append_user_flow_message
 from app.detail_media import (
-    _rows_from_recent_listado,
     resolve_detail_property_row,
     user_reports_missing_media,
     user_requests_property_detail,
 )
+from app.listing_context import merge_last_listing_into_capture
 
 NOGALES_ROW = {
     "ID": "42",
@@ -48,50 +48,27 @@ def test_missing_media_triggers_detail() -> None:
     assert user_requests_property_detail("No veo las fotos")
 
 
-def test_resolve_from_history_when_user_asked_nogales() -> None:
-    history = [
-        HistoryTurn(
-            role="user",
-            content="Me interesa la que está ubicada en los nogales",
-        ),
-    ]
+def test_resolve_from_last_listing_in_capture() -> None:
+    capture = merge_last_listing_into_capture(
+        {},
+        property_ids=["99", "42"],
+        branch="alquiler",
+        catalog_path="data/catalog.csv",
+    )
 
-    def fake_find(
-        _path: str | None,
-        text: str,
-        *,
-        rows_scope: list | None = None,
+    with patch(
+        "app.listing_context.load_last_listing_rows",
+        return_value=[{"ID": "99"}, NOGALES_ROW],
     ):
-        if "nogales" in text.lower():
-            return NOGALES_ROW
-        return None
-
-    with patch("app.detail_media.find_property_row_for_user_text", side_effect=fake_find):
         row = resolve_detail_property_row(
-            catalog_csv_path="any.csv",
-            current_user_text="No veo las fotos",
+            catalog_csv_path="data/catalog.csv",
+            current_user_text="me interesa la opción 2",
             outbound_message="Te paso el material visual 👇",
-            history=history,
             property_ref="",
             flow_path="alquiler",
             catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
             catalog_rent_path="data/tenants/inmobiliaria_cowork_alquiler.csv",
+            capture_data=capture,
         )
     assert row is not None
     assert row["ID"] == "42"
-
-
-def test_rows_from_recent_listado_parses_ids() -> None:
-    history = [
-        HistoryTurn(
-            role="assistant",
-            content="Opciones:\n\n[LISTADO:99,42]\n\n¿Cuál te interesa?",
-        ),
-    ]
-    with patch(
-        "app.detail_media.get_properties_by_ids",
-        return_value=[NOGALES_ROW],
-    ):
-        rows = _rows_from_recent_listado(history, "data/catalog.csv")
-    assert len(rows) == 1
-    assert rows[0]["ID"] == "42"

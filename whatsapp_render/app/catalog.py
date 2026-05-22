@@ -123,6 +123,21 @@ def resolve_rent_catalog_path(
         return str(candidate)
 
 
+def catalog_paths_for_flow(
+    flow_path: str,
+    catalog_sale_path: str | None,
+    catalog_rent_path: str | None,
+) -> list[str]:
+    path = (flow_path or "").strip().lower()
+    if path == "alquiler":
+        rent = resolve_rent_catalog_path(catalog_sale_path, catalog_rent_path)
+        return [rent] if rent else []
+    if path == "compra":
+        sale = (catalog_sale_path or "").strip()
+        return [sale] if sale else []
+    return []
+
+
 def is_property_available(row: dict[str, Any]) -> bool:
     raw = str(row.get("Disponible", "")).strip().lower()
     return raw in _AVAILABLE_VALUES

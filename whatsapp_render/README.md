@@ -1,4 +1,4 @@
-# WhatsApp MVP en Render (FastAPI + Meta Cloud API + DeepSeek/Groq + multicliente)
+# WhatsApp MVP en Render (FastAPI + Meta Cloud API + DeepSeek + multicliente)
 
 Servicio para responder WhatsApp con un solo backend:
 
@@ -22,10 +22,6 @@ Servicio para responder WhatsApp con un solo backend:
 | `DEEPSEEK_API_KEY` | si (chat) | API key DeepSeek — respuestas al cliente (`deepseek-chat`) |
 | `DEEPSEEK_MODEL` | no | Default: `deepseek-chat` |
 | `LLM_CHAT_PROVIDER` | no | Default: `deepseek` |
-| `LLM_CLASSIFIER_PROVIDER` | no | Default: `groq` (leads / waitlist) |
-| `GROQ_API_KEY` | si (leads) | API key de Groq |
-| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` (opcional si usás Groq para chat) |
-| `GROQ_LEAD_MODEL` | no | Default: `llama-3.1-8b-instant` (clasificador de leads) |
 | `APP_ENV` | no | `development` / `dev` / `local` desactiva leads |
 | `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |
 | `LEAD_WHATSAPP_NOTIFY_TO` | no | Número del asesor (solo dígitos, ej. `5492494123456`) para avisar leads por WhatsApp |
@@ -42,6 +38,7 @@ Servicio para responder WhatsApp con un solo backend:
 | `GOOGLE_APPLICATION_CREDENTIALS` | alternativa | Ruta a archivo JSON (desarrollo local) |
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 | `LISTING_IMAGE_DELIVERY` | no | Default `true`; `false` = listados en un solo mensaje de texto |
+| `MINIMAL_SYSTEM_PROMPT` | no | Reemplaza el system prompt corto de chat (captación / preguntas post-listado) |
 | `META_APP_ID` | onboarding | App ID de Meta (panel Embedded Signup) |
 | `META_EMBEDDED_SIGNUP_CONFIG_ID` | onboarding | Configuration ID de Facebook Login for Business |
 | `ONBOARDING_API_SECRET` | onboarding | Bearer para panel → `POST /api/onboarding/*` |
@@ -103,7 +100,7 @@ Columnas principales:
 - `phone_number_id` (unico) — coincide con `value.metadata.phone_number_id` del webhook
 - `access_token` — token de WhatsApp Cloud API de ese cliente (Fase 1 en texto plano; rotar si se filtra)
 - `name` — opcional
-- `system_prompt` — opcional; si vacío se usa el prompt **Espacios360 Flow** del código
+- `system_prompt` — opcional; reemplaza el prompt mínimo por defecto (conviene dejarlo corto o vacío)
 - `catalog_csv_path` — **Venta**: ruta CSV (`data/tenants/foo.csv`) o URL/ID de Google Sheet
 - `catalog_rent_csv_path` — **Alquiler**: ruta CSV o URL/ID de Google Sheet (obligatorio si venta es Sheet)
 - `waba_id`, `business_portfolio_id` — Embedded Signup
@@ -188,7 +185,6 @@ python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 $env:DATABASE_URL="postgresql://..."
-$env:GROQ_API_KEY="..."
 $env:META_VERIFY_TOKEN="..."
 $env:META_APP_SECRET="..."
 uvicorn app.main:app --reload --port 8000
@@ -280,14 +276,21 @@ La firma se calcula con el **cuerpo crudo** del `POST` y el **secreto de la apli
 3. Revisa logs: si `cabecera_X-Hub-Signature-256_longitud=0`, Meta no esta enviando la cabecera (proxy o ruta incorrecta).
 4. Solo para aislar el problema (nunca en produccion): `META_SKIP_SIGNATURE=1` confirma que el resto del flujo funciona; luego volve a validar firma con el App Secret correcto.
 
-## Flujo Espacios360 (3 caminos)
+## Flujo conversacional (mínimo, backend-first)
 
-1. **Triage** (`flow_path=nuevo`): saludo y pregunta si compra, alquila o vende su propiedad.
-2. **Compra** (`compra`): catálogo de venta; perfil (zona, ambientes, presupuesto); sin preguntar financiación antes de listar; bandera `[ALERTA_VENTA]` si hay interés alto.
-3. **Alquiler** (`alquiler`): al entrar a la rama pregunta perfil (ambientes/dormitorios, zona, casa o depto); luego hasta 3 opciones del catálogo; bandera `[ALERTA_ALQUILER]` tras visita + preferencia horaria.
-4. **Captación** (`captacion`): recopila tipo, ubicación y m²/ambientes; cierre fijo y `[ALERTA_CAPTACION_PROPIETARIO]`; **pausa el bot** para ese chat (`bot_paused`).
+Lógica en [`app/conversation_flow.py`](app/conversation_flow.py) (fachada: [`app/turn_handler.py`](app/turn_handler.py)) y [`app/prompts/templates.py`](app/prompts/templates.py).
 
-Estado por chat en `chat_sessions`. Las banderas se eliminan del texto enviado al cliente. En **compra/alquiler**, el lead en `client_leads` y el WhatsApp al asesor se disparan **solo en el turno** en que el bot le dice al cliente que un asesor se comunicará para coordinar la visita (no al pedir preferencia horaria ni al listar opciones). Captación sigue registrando con `[ALERTA_CAPTACION_PROPIETARIO]`.
+| Fase | Comportamiento | LLM |
+|------|----------------|-----|
+| Triage (`nuevo`) | Mensaje fijo: comprar / alquilar / vender | No |
+| Intake (`compra`/`alquiler`) | Preguntas de [`search_profile.py`](app/search_profile.py) | No |
+| Listado | Intro fija + `[LISTADO:ids]` + fotos (backend) | No |
+| Preguntas sobre opciones ya mostradas | Respuesta con datos compactos de las 3 opciones | DeepSeek (prompt mínimo) |
+| Detalle (`opción N`, fotos, elección) | Intro fija + ficha/media | No |
+| Visita / asesor | Texto fijo de handoff; alertas inyectadas por código | No |
+| Captación | Chat con prompt mínimo; cierre fijo al completar captura | DeepSeek opcional |
+
+Estado por chat en `chat_sessions` (`last_listing` en `capture_data` para elegir opción 1/2/3). Alertas `ALERTA_VENTA`, `ALERTA_ALQUILER` y `ALERTA_CAPTACION_PROPIETARIO` las detecta el backend en `conversation_flow`, no el LLM.
 
 **Catálogo alquiler:** si `catalog_rent_csv_path` está vacío y **venta es CSV local**, el backend busca `{nombre_venta}_alquiler.csv` en la misma carpeta. Si **venta es Google Sheet**, configurá explícitamente el Sheet de alquiler en `catalog_rent_csv_path`.
 
@@ -296,14 +299,14 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Catálogo y relevancia
 
 - Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
-- El bloque del **system prompt** usa formato **compacto por rama**: en **compra** (Lugar/Zona, precio USD, sin expensas ni tour); en **alquiler** (Barrio, precio mensual ARS, expensas/garantías si existen, flags `media:` sin URLs largas). **Cacheado en memoria** (TTL Sheets, mtime CSV).
+- Selección de listado: filtros por perfil en [`catalog_search.py`](app/catalog_search.py) (tipo, zona, dormitorios, presupuesto).
+- Preguntas post-listado: bloque compacto `Opción 1/2/3` solo en turnos de chat, no en el envío de fotos.
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
-- El LLM elige cuáles mencionar según la consulta (entre las filas ya filtradas por disponibilidad).
 
 ### Enlaces de fotos y video (WhatsApp)
 
 - En **detalle**, el backend envía botones CTA con etiquetas cortas (`📸 Fotos`, `🎥 Video`, etc.); la URL no se muestra en el texto.
-- En **listados** (hasta 3 opciones): el LLM incluye el tag `[LISTADO:id1,id2,id3]` (IDs del catálogo). El backend ([`app/listing_delivery.py`](app/listing_delivery.py)) envía:
+- En **listados** (hasta 3 opciones): el backend arma `[LISTADO:id1,id2,id3]` ([`app/listing_delivery.py`](app/listing_delivery.py)) envía:
   1. Texto de introducción
   2. Hasta 3 **mensajes de imagen** (`foto_principal` por ID) con caption (dirección, precio, ambientes, tour 360 si aplica)
   3. Pregunta de cierre
@@ -313,15 +316,15 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 - Si el cliente **pide solo fotos o solo video**, el backend inyecta los links; el LLM no debe pegar URLs crudas.
 - `foto_principal` debe ser URL **HTTPS pública** directa a JPG/PNG (Meta descarga la imagen). Perfiles de Instagram u otras páginas no sirven como imagen embebida.
 
-## Historial de conversación
+## Estado de sesión (sin historial de chat)
 
-- Se guardan los últimos **10 mensajes** (≈5 turnos user/assistant) por `phone_number_id` + `wa_id` en `chat_messages`, o en memoria si no hay `DATABASE_URL`.
-- Groq recibe: `system` (reglas + catálogo) + historial + mensaje actual.
-- Variable opcional: `CHAT_HISTORY_MAX_MESSAGES` (default `10`).
+- No se persiste historial de mensajes en `chat_messages` ni en memoria.
+- El contexto vive en `chat_sessions.capture_data`: `search_profile`, `last_listing`, `user_flow_messages` (mensajes del cliente por rama), flags de bot (`bot_asked_visit_time`).
+- DeepSeek (chat mínimo) recibe: system corto + **solo el mensaje actual**.
 
 ## Leads (`client_leads`)
 
-Requiere `DATABASE_URL`. En **compra** y **alquiler**, el registro usa los datos ya recompilados (clasificador, referencia de propiedad, preferencia horaria en alquiler) **en el mismo turno** en que el mensaje saliente avisa contacto del asesor. No hay registro paralelo por clasificador en esas ramas. Captación y otros flujos pueden seguir usando el clasificador según corresponda.
+Requiere `DATABASE_URL`. El registro ocurre cuando el backend dispara una alerta (visita compra/alquiler o captación completa) en el mismo turno.
 
 - Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
 - `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
@@ -329,17 +332,13 @@ Requiere `DATABASE_URL`. En **compra** y **alquiler**, el registro usa los datos
 - `conversation_summary`: resumen en prosa (2–4 oraciones) generado por LLM; no es transcripción línea a línea del chat
 - Mismo cliente + propiedad en 24 h → **actualiza** la fila (sin reenviar aviso).
 
-### Alquiler: visita y preferencia horaria
-
-En la rama **alquiler**, la bandera `[ALERTA_ALQUILER]` se habilita cuando el cliente ya dio **preferencia horaria** (mañana/tarde/fin de semana) tras pedir visita, no en el primer “¿cuándo puedo verlos?”. La fila en `client_leads` se crea **en el turno siguiente** en que el bot confirma que un asesor lo contactará (mismo mensaje que ve el cliente). Ese registro incluye texto del tipo `Preferencia horaria: tarde` e interés en dos opciones si aplica.
-
 ### Aviso por WhatsApp al equipo
 
 Si `LEAD_WHATSAPP_NOTIFY_TO` está definido (número en formato internacional **solo dígitos**, ej. `5492494123456`), al **crear** un lead con interés real el bot envía un mensaje de texto al asesor con:
 
 - Nombre del contacto (perfil WhatsApp)
 - `wa_id` del cliente
-- Propiedad de referencia (si la detectó el clasificador)
+- Propiedad de referencia (si se detectó en el mensaje o listado)
 - Resumen del interés y de la conversación
 
 Usa el mismo `access_token` y `phone_number_id` del tenant (número de la inmobiliaria en Meta). El destinatario debe haber iniciado chat con ese número de WhatsApp Business al menos una vez (ventana de 24 h) o estar en la lista de permitidos de la app.
@@ -358,16 +357,7 @@ ORDER BY conversation_at DESC;
 
 ## Lista de espera (`client_waitlist`)
 
-Flujo en **compra** y **alquiler** cuando el cliente vio opciones del catálogo y **ninguna le encaja**:
-
-1. El bot resume necesidades (zona, presupuesto, ambientes, etc.) de la rama actual.
-2. Confirma con el cliente y pregunta si quiere agregar algo.
-3. Ofrece avisarlo cuando aparezca algo acorde.
-4. Si acepta, el LLM incluye `[LISTA_ESPERA]` y se guarda en Postgres.
-
-Tabla `client_waitlist`: `seek_type` (`venta` / `alquiler`), `requirements_json`, `requirements_summary`, `conversation_summary`, `status` (default `active`). Un registro activo por cliente y tipo se **actualiza** al re-registrar.
-
-### Export CSV (informe semanal manual)
+El bot **no** registra lista de espera automáticamente. La tabla queda para datos históricos o carga manual. Export CSV:
 
 Requiere `WAITLIST_EXPORT_SECRET` y `DATABASE_URL`.
 

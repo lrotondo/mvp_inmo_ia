@@ -4,34 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app.conversation import HistoryTurn
-from app.detail_media import enrich_detail_media_from_catalog
-from app.flow_triggers import (
-    apply_captacion_closing,
-    apply_visit_handoff,
-    parse_flow_alerts,
-    resolve_flow_alerts,
-)
-from app.listing_context import (
-    load_last_listing_rows,
-    merge_last_listing_into_capture,
-    property_ref_from_listing_choice,
-)
-from app.property_matching import extract_property_ref
-from app.listing_delivery import (
-    ensure_listado_from_candidates,
-    suppress_premature_catalog_outbound,
-    suppress_repeat_listado_outbound,
-)
-from app.listing_context import listing_already_shown
-from app.session_state import SessionState
-from app.turn_handler import (
-    TurnContext,
-    TurnKind,
-    generate_turn_reply,
-    plan_turn,
-    session_capture_with_profile,
-)
+from app.conversation_flow import handle_turn
 from app.tenant_service import TenantContext
 
 logger = logging.getLogger(__name__)
@@ -49,136 +22,46 @@ class InboundTurnResult:
     catalog_path_used: str | None
     capture_data: dict[str, Any] | None
     has_waitlist_tag: bool = False
+    bot_paused: bool = False
 
 
 async def process_inbound_message(
     *,
     ctx: TenantContext,
-    session: SessionState,
+    session,
     flow_path: str,
-    history: list[HistoryTurn],
     user_text: str,
     flow_just_switched: bool,
 ) -> InboundTurnResult:
-    turn_ctx = TurnContext(
+    _ = flow_just_switched
+    result = await handle_turn(
         tenant_name=ctx.name or "la inmobiliaria",
         flow_path=flow_path,
         catalog_sale_path=ctx.catalog_csv_path,
         catalog_rent_path=ctx.catalog_rent_csv_path,
         system_prompt_override=ctx.system_prompt,
         capture_data=dict(session.capture_data),
+        user_text=user_text,
+        session_flow_path=session.flow_path,
     )
-    plan = plan_turn(turn_ctx, history, user_text)
-
-    answer = await generate_turn_reply(turn_ctx, history, user_text, plan)
-
-    clean_answer, raw_alerts, has_waitlist_tag = parse_flow_alerts(answer)
-    alerts, interest_classification = await resolve_flow_alerts(
-        raw_alerts,
-        history=history,
-        current_user_text=user_text,
-        flow_path=flow_path,
-        ctx=ctx,
-        flow_just_switched=flow_just_switched,
-    )
-
-    property_ref = plan.property_ref
-    if interest_classification and interest_classification.property_ref.strip():
-        property_ref = interest_classification.property_ref.strip()
-
-    listing_rows = load_last_listing_rows(
-        plan.catalog_path_used, session.capture_data
-    )
-    if plan.kind == TurnKind.DETAIL and listing_rows:
-        choice_ref = property_ref_from_listing_choice(user_text, listing_rows)
-        if choice_ref.strip():
-            property_ref = choice_ref.strip()
-
-    if not property_ref and not (plan.kind == TurnKind.DETAIL and listing_rows):
-        property_ref = extract_property_ref(
-            "",
-            flow_path=flow_path,
-            catalog_sale_path=ctx.catalog_csv_path,
-            catalog_rent_path=ctx.catalog_rent_csv_path,
-            history=history,
-            current_user_text=user_text,
-            user_only=True,
-        )
-
-    clean_answer = apply_visit_handoff(
-        clean_answer,
-        alerts,
-        property_ref=property_ref,
-        flow_path=flow_path,
-        current_user_text=user_text,
-    )
-    clean_answer = apply_captacion_closing(clean_answer, alerts)
-
-    if plan.kind == TurnKind.LISTING and plan.candidate_ids:
-        clean_answer = ensure_listado_from_candidates(
-            clean_answer,
-            plan.candidate_ids,
-            plan.catalog_path_used,
-        )
-    elif plan.kind != TurnKind.LISTING:
-        clean_answer = suppress_premature_catalog_outbound(
-            clean_answer,
-            history=history,
-            current_user_text=user_text,
-            flow_path=flow_path,
-        )
-        if plan.kind == TurnKind.GENERAL:
-            clean_answer = suppress_repeat_listado_outbound(
-                clean_answer,
-                listing_already_shown=listing_already_shown(
-                    catalog_csv_path=plan.catalog_path_used,
-                    capture_data=session.capture_data,
-                    history=history,
-                ),
-            )
-
-    capture_data: dict[str, Any] = dict(session.capture_data)
-    if plan.profile and flow_path in ("compra", "alquiler"):
-        capture_data = session_capture_with_profile(session, plan.profile, flow_path)
-    if plan.kind == TurnKind.LISTING and plan.candidate_ids:
-        base = capture_data if capture_data is not None else dict(session.capture_data)
-        capture_data = merge_last_listing_into_capture(
-            base,
-            property_ids=plan.candidate_ids,
-            branch=flow_path,
-            catalog_path=plan.catalog_path_used,
-        )
-
-    clean_answer = enrich_detail_media_from_catalog(
-        clean_answer,
-        catalog_csv_path=plan.catalog_path_used,
-        property_ref=property_ref,
-        current_user_text=user_text,
-        flow_path=flow_path,
-        history=history,
-        catalog_sale_path=ctx.catalog_csv_path,
-        catalog_rent_path=ctx.catalog_rent_csv_path,
-        capture_data=capture_data or session.capture_data,
-    )
-
 
     logger.info(
-        "turn_done kind=%s profile_complete=%s candidate_ids=%s path=%r",
-        plan.kind.value,
-        plan.profile.is_complete if plan.profile else None,
-        plan.candidate_ids,
-        plan.catalog_path_used,
+        "turn_done phase=%s ids=%s path=%r",
+        result.phase,
+        result.candidate_ids,
+        result.catalog_path,
     )
 
     return InboundTurnResult(
-        clean_answer=clean_answer,
-        raw_alerts=raw_alerts,
-        alerts=alerts,
-        interest_classification=interest_classification,
-        property_ref=property_ref,
-        plan_kind=plan.kind.value,
-        candidate_ids=plan.candidate_ids,
-        catalog_path_used=plan.catalog_path_used,
-        capture_data=capture_data,
-        has_waitlist_tag=has_waitlist_tag,
+        clean_answer=result.text,
+        raw_alerts=list(result.alerts),
+        alerts=list(result.alerts),
+        interest_classification=None,
+        property_ref=result.property_ref,
+        plan_kind=result.phase,
+        candidate_ids=result.candidate_ids,
+        catalog_path_used=result.catalog_path,
+        capture_data=result.capture_data,
+        has_waitlist_tag=False,
+        bot_paused=result.bot_paused,
     )

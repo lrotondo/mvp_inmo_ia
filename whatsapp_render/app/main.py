@@ -11,22 +11,15 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
-from app.conversation import (
-    append_conversation_turn,
-    get_conversation_history,
-)
+from app.capture_flow import merge_outbound_capture_flags
 from app.db import dispose_engine, get_engine, init_db
-from app.flow_triggers import (
-    process_flow_alerts,
-    register_visit_lead_on_handoff_message,
-    process_waitlist_registration,
-)
+from app.leads import LeadType, try_register_flow_alert
+from app.session_state import capture_summary_text
 from app.waitlist import fetch_waitlist_rows, waitlist_rows_to_csv
 from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
 )
-from app.leads import try_register_lead
 from app.listing_delivery import deliver_bot_response
 from app.meta_client import MetaSendError
 from app.pipeline.inbound import process_inbound_message
@@ -40,6 +33,42 @@ from app.onboarding import onboarding_router
 from app.onboarding.account_update import process_account_update_webhook
 
 logger = logging.getLogger(__name__)
+
+_ALERT_TO_LEAD_TYPE: dict[str, LeadType] = {
+    "ALERTA_VENTA": "venta",
+    "ALERTA_ALQUILER": "alquiler",
+    "ALERTA_CAPTACION_PROPIETARIO": "captacion",
+}
+
+
+async def _register_simple_alerts(
+    *,
+    alerts: list[str],
+    flow_path: str,
+    property_ref: str,
+    ctx: TenantContext,
+    contact_name: str | None,
+    wa_id: str,
+    user_text: str,
+    capture_data: dict[str, Any] | None,
+) -> None:
+    summary = (user_text or "").strip()
+    cap_summary = capture_summary_text(capture_data) if capture_data else None
+    for tag in alerts:
+        lead_type = _ALERT_TO_LEAD_TYPE.get(tag)
+        if not lead_type:
+            continue
+        await try_register_flow_alert(
+            lead_type=lead_type,
+            phone_number_id=ctx.phone_number_id,
+            wa_id=wa_id,
+            contact_name=contact_name,
+            property_ref=property_ref or "",
+            interest_summary=summary,
+            conversation_summary=summary,
+            capture_summary=cap_summary,
+            access_token=ctx.access_token,
+        )
 
 
 def _configure_logging() -> None:
@@ -61,7 +90,6 @@ def _configure_logging() -> None:
         "app.meta_client",
         "app.leads",
         "app.session_state",
-        "app.flow_triggers",
     ):
         logging.getLogger(name).setLevel(logging.INFO)
 
@@ -501,14 +529,8 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             )
             continue
 
-        history = await asyncio.to_thread(
-            get_conversation_history,
-            ctx.phone_number_id,
-            wa_id,
-        )
-
         previous_flow_path = session.flow_path
-        flow_path = resolve_flow_path(session, user_text, history)
+        flow_path = resolve_flow_path(session, user_text)
         flow_just_switched = (
             previous_flow_path != flow_path
             and flow_path in ("compra", "alquiler")
@@ -524,27 +546,15 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             ctx=ctx,
             session=session,
             flow_path=flow_path,
-            history=history,
             user_text=user_text,
             flow_just_switched=flow_just_switched,
         )
 
-        if turn_result.capture_data is not None:
-            await asyncio.to_thread(
-                save_session,
-                ctx.phone_number_id,
-                wa_id,
-                flow_path=flow_path,
-                capture_data=turn_result.capture_data,
-            )
-
         clean_answer = turn_result.clean_answer
         raw_alerts = turn_result.raw_alerts
         alerts = turn_result.alerts
-        interest_classification = turn_result.interest_classification
         property_ref = turn_result.property_ref
         catalog_path_used = turn_result.catalog_path_used
-        raw_waitlist_tag = turn_result.has_waitlist_tag
 
         logger.info(
             "Turno kind=%s answer_len=%s raw_alerts=%s alerts=%s ids=%s",
@@ -564,7 +574,6 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 catalog_csv_path=catalog_path_used,
                 current_user_text=user_text,
                 flow_path=flow_path,
-                history=history,
                 catalog_sale_path=ctx.catalog_csv_path,
                 catalog_rent_path=ctx.catalog_rent_csv_path,
                 property_ref=property_ref,
@@ -587,72 +596,36 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             )
             outbound_for_client = clean_answer
 
+        capture_after_turn = merge_outbound_capture_flags(
+            turn_result.capture_data or dict(session.capture_data),
+            outbound_for_client,
+        )
+        bot_paused = turn_result.bot_paused or session.bot_paused
+        await asyncio.to_thread(
+            save_session,
+            ctx.phone_number_id,
+            wa_id,
+            flow_path=flow_path,
+            capture_data=capture_after_turn,
+            bot_paused=bot_paused,
+        )
+
         try:
-            await register_visit_lead_on_handoff_message(
-                outbound_message=outbound_for_client,
+            await _register_simple_alerts(
                 alerts=alerts,
                 flow_path=flow_path,
+                property_ref=property_ref,
                 ctx=ctx,
                 contact_name=contact_name or None,
                 wa_id=wa_id,
-                history=history,
-                current_user_text=user_text,
-                classification=interest_classification,
-                session=session,
+                user_text=user_text,
+                capture_data=capture_after_turn,
             )
-
-            await process_flow_alerts(
-                alerts=alerts,
-                session=session,
-                flow_path=flow_path,
-                ctx=ctx,
-                contact_name=contact_name or None,
-                wa_id=wa_id,
-                history=history,
-                current_user_text=user_text,
-                classification=interest_classification,
-            )
-
-            await process_waitlist_registration(
-                has_waitlist_tag=raw_waitlist_tag,
-                flow_path=flow_path,
-                ctx=ctx,
-                contact_name=contact_name or None,
-                wa_id=wa_id,
-                history=history,
-                current_user_text=user_text,
-            )
-
-            if flow_path not in ("compra", "alquiler"):
-                await try_register_lead(
-                    phone_number_id=ctx.phone_number_id,
-                    wa_id=wa_id,
-                    contact_name=contact_name or None,
-                    catalog_csv_path=ctx.catalog_csv_path,
-                    catalog_rent_csv_path=ctx.catalog_rent_csv_path,
-                    flow_path=flow_path,
-                    current_user_text=user_text,
-                    access_token=ctx.access_token,
-                    history=history,
-                    skip_if_flow_alert_registered=bool(alerts),
-                )
         except Exception:
             logger.exception(
-                "Error post-respuesta (alertas/lead/waitlist) wa_id=%s; "
-                "el cliente ya recibio el mensaje",
+                "Error registrando alerta/lead wa_id=%s",
                 wa_id,
             )
-
-        try:
-            await asyncio.to_thread(
-                append_conversation_turn,
-                ctx.phone_number_id,
-                wa_id,
-                user_text,
-                outbound_for_client,
-            )
-        except Exception:
-            logger.exception("Error guardando historial wa_id=%s", wa_id)
 
         logger.info(
             "Respuesta enviada a wa_id=%s",

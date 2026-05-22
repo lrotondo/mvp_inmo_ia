@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.conversation import HistoryTurn
-from app.lead_context import extract_property_ref
+from app.property_matching import extract_property_ref
 from app.property_ficha import (
     build_detail_delivery_caption,
     intro_conflicts_with_catalog_row,
@@ -38,15 +37,9 @@ _CATALOG_ROWS = [GARIBALDI_ROW, SANTA_MARIA_ROW]
 
 
 def test_extract_property_ref_prioritizes_current_message() -> None:
-    history = [
-        HistoryTurn(
-            role="user",
-            content="me interesa la de Santa María de Oro al 100",
-        ),
-    ]
     with (
         patch(
-            "app.lead_context.catalog_paths_for_flow",
+            "app.catalog.catalog_paths_for_flow",
             return_value=[TENANT_RENT],
         ),
         patch(
@@ -59,9 +52,7 @@ def test_extract_property_ref_prioritizes_current_message() -> None:
             flow_path="alquiler",
             catalog_sale_path="data/tenants/inmobiliaria_cowork.csv",
             catalog_rent_path=TENANT_RENT,
-            history=history,
             current_user_text="te pedi info de la de garibaldi y 4 de abril",
-            user_only=True,
         )
     assert "Garibaldi" in ref
     assert "Santa" not in ref

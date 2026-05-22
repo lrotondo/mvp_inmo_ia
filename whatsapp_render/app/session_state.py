@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 from sqlalchemy import select
 
-from app.conversation import HistoryTurn
 from app.db import get_engine, session_scope
 from app.models import ChatSession
 
@@ -226,7 +225,6 @@ def _detect_flow_from_text(text: str) -> FlowPath | None:
 def resolve_flow_path(
     session: SessionState,
     current_user_text: str,
-    history: list[HistoryTurn],
 ) -> FlowPath:
     current = session.flow_path
 
@@ -250,30 +248,23 @@ def resolve_flow_path(
     if current != "nuevo":
         return current
 
-    for turn in reversed(history):
-        if turn.role != "user":
-            continue
-        hist_detected = _detect_flow_from_text(turn.content)
-        if hist_detected is not None:
-            logger.info("Flow path desde historial: nuevo -> %s", hist_detected)
-            return hist_detected
-
     return "nuevo"
 
 
 def merge_capture_from_conversation(
     session: SessionState,
-    history: list[HistoryTurn],
     current_user_text: str,
 ) -> dict[str, Any]:
     """Heurística ligera para enriquecer capture_data en rama captación."""
     if session.flow_path != "captacion":
         return dict(session.capture_data)
 
+    from app.capture_flow import user_messages_for_flow
+
     data = dict(session.capture_data)
-    blob = " ".join(
-        t.content for t in history if t.role == "user"
-    ) + " " + current_user_text
+    blob = user_messages_for_flow(
+        current_user_text, "captacion", session.capture_data
+    )
 
     tipo_match = re.search(
         r"\b(casa|departamento|depto|terreno|lote|local|ph|quinta|campo)\b",

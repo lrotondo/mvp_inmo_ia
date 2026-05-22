@@ -6,9 +6,27 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.catalog_profiles import format_row_compact
-from app.lead_context import user_declined_zone_preference
 
 logger = logging.getLogger(__name__)
+
+_NO_DEFINED_ZONE_RE = re.compile(
+    r"\b("
+    r"no\s+tengo\s+zona|no\s+tengo\s+zonas?|"
+    r"no\s+tengo\s+preferencia\s+de\s+zona|no\s+tengo\s+zonas?\s+preferid[ao]s?|"
+    r"sin\s+zona\s+definida|sin\s+zonas?\s+preferid[ao]s?|"
+    r"no\s+tengo\s+barrio|"
+    r"cualquier\s+zona|cualquier\s+barrio|"
+    r"sin\s+preferencia\s+de\s+zona|no\s+importa\s+la\s+zona|"
+    r"no\s+me\s+importa\s+(?:la\s+)?zona|"
+    r"toda\s+la\s+ciudad|en\s+cualquier\s+parte|"
+    r"no\s+tengo\s+ubicaci[oó]n\s+definida|sin\s+ubicaci[oó]n\s+definida"
+    r")\b",
+    re.I,
+)
+
+
+def user_declined_zone_preference(user_messages_text: str) -> bool:
+    return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
 
 _MAX_LISTING_ITEMS = 3
 
@@ -307,23 +325,8 @@ def select_listing_candidates(
     *,
     branch: str,
     max_items: int = _MAX_LISTING_ITEMS,
-    catalog_path: str | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     criteria = parse_search_criteria(blob, branch=branch)
-    working = list(rows)
-    if catalog_path:
-        try:
-            from app.catalog_rag import search_catalog_ids
-
-            rag_ids = search_catalog_ids(catalog_path, branch, blob, k=15)
-            if rag_ids:
-                by_id = {str(r.get("ID", "")).strip(): r for r in rows}
-                ordered = [by_id[i] for i in rag_ids if i in by_id]
-                rest = [r for r in rows if str(r.get("ID", "")).strip() not in rag_ids]
-                working = ordered + rest
-        except Exception:
-            logger.exception("catalog_rag falló; filtro regex-only")
-
-    filtered = filter_catalog_rows(working, criteria, branch)
+    filtered = filter_catalog_rows(list(rows), criteria, branch)
     picked_rows = filtered[:max_items]
     return pick_listing_ids(picked_rows, max_items=max_items), picked_rows

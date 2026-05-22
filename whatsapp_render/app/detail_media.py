@@ -12,7 +12,8 @@ from app.catalog import (
     primary_photo_url,
     property_video_url,
 )
-from app.lead_context import extract_property_ref, user_search_profile_ready
+from app.property_matching import extract_property_ref
+from app.search_profile import user_search_profile_ready
 from app.media_urls import detail_image_url
 from app.meta_client import (
     is_public_https_image_url,
@@ -165,7 +166,7 @@ def should_deliver_property_detail_ficha(
     row: dict[str, Any] | None,
     outbound_message: str,
     current_user_text: str,
-    history: list | None = None,
+    capture_data: dict[str, Any] | None = None,
 ) -> bool:
     """Hay fila de catálogo y contexto de detalle / propiedad elegida."""
     path = (flow_path or "").strip().lower()
@@ -175,9 +176,9 @@ def should_deliver_property_detail_ficha(
         return False
     if (property_ref or "").strip():
         if path in ("compra", "alquiler") and not user_search_profile_ready(
-            history or [],
             current_user_text,
             flow_path,
+            capture_data=capture_data,
         ):
             explicit = (
                 user_requests_property_detail(current_user_text)
@@ -191,7 +192,7 @@ def should_deliver_property_detail_ficha(
         outbound_message=outbound_message,
         current_user_text=current_user_text,
         flow_path=flow_path,
-        history=history,
+        capture_data=capture_data,
     )
 
 
@@ -200,7 +201,7 @@ def should_enrich_property_detail(
     outbound_message: str,
     current_user_text: str,
     flow_path: str,
-    history: list | None = None,
+    capture_data: dict[str, Any] | None = None,
 ) -> bool:
     """Ficha + material visual: detalle, elección de propiedad o promesa del bot."""
     path = (flow_path or "").strip().lower()
@@ -214,9 +215,9 @@ def should_enrich_property_detail(
         return False
 
     profile_ready = user_search_profile_ready(
-        history or [],
         current_user_text,
         flow_path,
+        capture_data=capture_data,
     )
     explicit_detail = (
         user_requests_property_detail(current_user_text)
@@ -243,36 +244,11 @@ def should_enrich_property_detail(
     return False
 
 
-def _rows_from_recent_listado(
-    history: list | None,
-    catalog_csv_path: str | None,
-) -> list[dict[str, Any]]:
-    """Filas del último [LISTADO:...] en el historial (opciones que vio el cliente)."""
-    if not history or not catalog_csv_path:
-        return []
-    for turn in reversed(history):
-        if turn.role != "assistant":
-            continue
-        match = _LISTADO_IDS_RE.search(turn.content or "")
-        if not match:
-            continue
-        ids = [
-            pid.strip()
-            for pid in re.split(r"[,;\s]+", match.group(1))
-            if pid.strip()
-        ]
-        rows = get_properties_by_ids(catalog_csv_path, ids, max_items=3)
-        if rows:
-            return rows
-    return []
-
-
 def resolve_detail_property_row(
     *,
     catalog_csv_path: str | None,
     current_user_text: str,
     outbound_message: str,
-    history: list | None,
     property_ref: str,
     flow_path: str,
     catalog_sale_path: str | None,
@@ -286,8 +262,6 @@ def resolve_detail_property_row(
     )
 
     listado_rows = load_last_listing_rows(catalog_csv_path, capture_data)
-    if not listado_rows:
-        listado_rows = _rows_from_recent_listado(history, catalog_csv_path)
 
     choice_row = resolve_listing_choice_row(current_user_text, listado_rows)
     if choice_row is not None:
@@ -296,7 +270,6 @@ def resolve_detail_property_row(
     ref = property_ref_for_detail_enrich(
         current_user_text=current_user_text,
         outbound_message=outbound_message,
-        history=history or [],
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
@@ -324,16 +297,6 @@ def resolve_detail_property_row(
             current_user_text,
             rows_scope=listado_rows,
         )
-
-    if row is None and history and not user_showed_property_interest(current_user_text):
-        for turn in reversed(history or []):
-            if turn.role != "user":
-                continue
-            row = find_property_row_for_user_text(
-                catalog_csv_path, turn.content
-            )
-            if row is not None:
-                break
 
     return row
 
@@ -365,7 +328,6 @@ def property_ref_for_detail_enrich(
     *,
     current_user_text: str,
     outbound_message: str = "",
-    history: list,
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
@@ -374,7 +336,7 @@ def property_ref_for_detail_enrich(
     capture_data: dict[str, Any] | None = None,
     listing_rows: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Referencia desde mensaje del usuario (prioridad), historial o fallback."""
+    """Referencia desde mensaje del usuario (prioridad) o fallback."""
     from app.listing_context import (
         load_last_listing_rows,
         property_ref_from_listing_choice,
@@ -406,9 +368,7 @@ def property_ref_for_detail_enrich(
             flow_path=flow_path,
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
-            history=[],
             current_user_text=current_user_text,
-            user_only=True,
         )
         if ref_user.strip():
             return ref_user.strip()
@@ -424,9 +384,7 @@ def property_ref_for_detail_enrich(
             flow_path=flow_path,
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
-            history=[],
             current_user_text=outbound_message,
-            user_only=True,
         )
         if ref_bot.strip():
             return ref_bot.strip()
@@ -445,34 +403,15 @@ def property_ref_for_detail_enrich(
         or user_requests_property_detail(outbound_message)
     )
     if active_context:
-        ref_hist = extract_property_ref(
+        ref_current = extract_property_ref(
             "",
             flow_path=flow_path,
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
-            history=history,
             current_user_text=current_user_text,
-            user_only=True,
         )
-        if ref_hist.strip():
-            return ref_hist.strip()
-        for turn in reversed(history or []):
-            if turn.role != "user":
-                continue
-            ref_turn = extract_property_ref(
-                "",
-                flow_path=flow_path,
-                catalog_sale_path=catalog_sale_path,
-                catalog_rent_path=catalog_rent_path,
-                history=[],
-                current_user_text=turn.content,
-                user_only=True,
-            )
-            if ref_turn.strip():
-                return ref_turn.strip()
-            opt_ref = _property_ref_from_option_number(turn.content, catalog_csv_path)
-            if opt_ref:
-                return opt_ref
+        if ref_current.strip():
+            return ref_current.strip()
 
     return ""
 
@@ -557,7 +496,6 @@ def enrich_detail_media_from_catalog(
     property_ref: str,
     current_user_text: str = "",
     flow_path: str = "compra",
-    history: list | None = None,
     catalog_sale_path: str | None = None,
     catalog_rent_path: str | None = None,
     capture_data: dict[str, Any] | None = None,
@@ -571,7 +509,7 @@ def enrich_detail_media_from_catalog(
         outbound_message=body,
         current_user_text=current_user_text,
         flow_path=flow_path,
-        history=history,
+        capture_data=capture_data,
     ):
         cleaned = strip_property_media_from_message(body)
         if cleaned != body:
@@ -581,7 +519,6 @@ def enrich_detail_media_from_catalog(
     ref = property_ref_for_detail_enrich(
         current_user_text=current_user_text,
         outbound_message=body,
-        history=history or [],
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
@@ -600,7 +537,6 @@ def enrich_detail_media_from_catalog(
         catalog_csv_path=catalog_csv_path,
         current_user_text=current_user_text,
         outbound_message=body,
-        history=history,
         property_ref=ref or property_ref,
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
@@ -690,7 +626,6 @@ async def try_deliver_single_property_visual(
     catalog_csv_path: str | None,
     current_user_text: str,
     flow_path: str,
-    history: list | None,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
     property_ref: str = "",
@@ -699,7 +634,7 @@ async def try_deliver_single_property_visual(
 ) -> str | None:
     """
     Envía foto + texto (galería/video) cuando hay elección o promesa de material visual.
-    Retorna texto consolidado para historial, o None para envío de texto único normal.
+    Retorna texto consolidado enviado, o None para envío de texto único normal.
     """
     body = (message or "").strip()
 
@@ -707,7 +642,6 @@ async def try_deliver_single_property_visual(
         catalog_csv_path=catalog_csv_path,
         current_user_text=current_user_text,
         outbound_message=body,
-        history=history,
         property_ref=property_ref,
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
@@ -721,7 +655,7 @@ async def try_deliver_single_property_visual(
         row=row,
         outbound_message=body,
         current_user_text=current_user_text,
-        history=history,
+        capture_data=capture_data,
     ):
         return None
 

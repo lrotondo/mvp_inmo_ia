@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import re
 
-from app.conversation import HistoryTurn
-
 _STREET_AL_RE = re.compile(r"\s+al\s+", re.I)
 
 
@@ -23,7 +21,7 @@ def _property_ref_from_blob_norm(
     skip_barrio: bool,
 ) -> str:
     from app.catalog import field_matches_reference, iter_rows_for_property_matching
-    from app.lead_context import catalog_paths_for_flow
+    from app.catalog import catalog_paths_for_flow
 
     best = ""
     best_len = 0
@@ -65,11 +63,9 @@ def extract_property_ref(
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
-    history: list[HistoryTurn] | None = None,
     current_user_text: str = "",
-    user_only: bool = False,
 ) -> str:
-    from app.lead_context import user_declined_zone_preference, user_messages_for_flow
+    from app.catalog_search import user_declined_zone_preference
 
     current = (current_user_text or "").strip()
     if current:
@@ -85,13 +81,12 @@ def extract_property_ref(
         if ref:
             return ref
 
-    if user_only and history is not None:
-        blob = user_messages_for_flow(history, current_user_text, flow_path).lower()
-    else:
-        blob = conversation_text.lower()
+    blob = (conversation_text or "").lower()
+    if not blob.strip():
+        return ""
 
     blob_norm = _normalize_property_match_text(blob)
-    skip_barrio = user_declined_zone_preference(blob)
+    skip_barrio = user_declined_zone_preference(blob_norm)
     return _property_ref_from_blob_norm(
         blob_norm,
         flow_path=flow_path,

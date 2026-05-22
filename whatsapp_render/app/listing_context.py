@@ -5,7 +5,6 @@ from typing import Any
 
 from app.catalog import get_properties_by_ids
 from app.catalog_profiles import format_row_compact
-from app.conversation import HistoryTurn
 from app.property_matching import _normalize_property_match_text
 
 _LAST_LISTING_KEY = "last_listing"
@@ -195,25 +194,28 @@ def property_ref_from_listing_option_number(
     return str(listing_rows[index - 1].get("ID", "")).strip()
 
 
-def history_contains_listado(history: list[HistoryTurn] | None) -> bool:
-    for turn in history or []:
-        if turn.role == "assistant" and _LISTADO_TAG_RE.search(turn.content or ""):
-            return True
-    return False
-
-
 def listing_already_shown(
     *,
     catalog_csv_path: str | None,
     capture_data: dict[str, Any] | None,
-    history: list[HistoryTurn] | None,
 ) -> bool:
     raw = (capture_data or {}).get(_LAST_LISTING_KEY)
     if isinstance(raw, dict) and raw.get("ids"):
         return True
-    if load_last_listing_rows(catalog_csv_path, capture_data):
-        return True
-    return history_contains_listado(history)
+    return bool(load_last_listing_rows(catalog_csv_path, capture_data))
+
+
+_MORE_PHOTOS_RE = re.compile(
+    r"\b("
+    r"m[aá]s\s+fotos|fotos\s+m[aá]s|m[aá]s\s+im[aá]genes|"
+    r"ver\s+(?:las\s+)?fotos|ten[eé]s\s+fotos|tienen\s+fotos"
+    r")\b",
+    re.I,
+)
+
+
+def user_requests_more_photos(user_text: str) -> bool:
+    return bool(_MORE_PHOTOS_RE.search((user_text or "").strip()))
 
 
 _SELECTION_RE = re.compile(
@@ -232,9 +234,27 @@ def user_showed_property_selection(user_text: str) -> bool:
     return bool(_SELECTION_RE.search((user_text or "").strip()))
 
 
-def user_requests_fresh_listing(user_text: str) -> bool:
-    from app.lead_context import current_message_is_browse_only
+_BROWSE_ONLY_RE = re.compile(
+    r"\b("
+    r"dec[ií]me\s+qu[eé]\s+ten[eé]s|qu[eé]\s+ten[eé]s|qu[eé]\s+hay|"
+    r"ten[eé]s\s+algo|alguna\s+opci[oó]n|ver\s+opci[oó]nes|"
+    r"mostr[aá](?:me)?\s+opci[oó]nes|qu[eé]\s+disponible|mostr[aá]me|"
+    r"qu[eé]\s+opciones|opciones\s+para\s+comprar|opciones\s+de\s+compra|"
+    r"opciones\s+para\s+alquilar|opciones\s+de\s+alquiler|qu[eé]\s+casas|"
+    r"qu[eé]\s+departamentos|qu[eé]\s+propiedades"
+    r")\b",
+    re.I,
+)
 
+
+def current_message_is_browse_only(current_user_text: str) -> bool:
+    body = (current_user_text or "").strip()
+    if not body:
+        return False
+    return bool(_BROWSE_ONLY_RE.search(body))
+
+
+def user_requests_fresh_listing(user_text: str) -> bool:
     text = (user_text or "").strip()
     if not text:
         return False

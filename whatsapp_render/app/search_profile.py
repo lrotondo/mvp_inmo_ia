@@ -1,22 +1,66 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.catalog_search import (
+    _parse_min_bedrooms,
     parse_property_type_from_blob,
     parse_search_criteria,
 )
-from app.conversation import HistoryTurn
 from app.bedroom_intake import bedroom_signal_in_text, parse_bedroom_count
-from app.catalog_search import _parse_min_bedrooms
-from app.lead_context import (
-    _BEDROOM_SIGNAL_RE,
-    user_declined_zone_preference,
-    user_has_budget_usd,
-    user_messages_for_flow,
+from app.capture_flow import user_messages_for_flow
+
+_NO_DEFINED_ZONE_RE = re.compile(
+    r"\b("
+    r"no\s+tengo\s+zona|no\s+tengo\s+zonas?|"
+    r"no\s+tengo\s+preferencia\s+de\s+zona|no\s+tengo\s+zonas?\s+preferid[ao]s?|"
+    r"sin\s+zona\s+definida|sin\s+zonas?\s+preferid[ao]s?|"
+    r"no\s+tengo\s+barrio|"
+    r"cualquier\s+zona|cualquier\s+barrio|"
+    r"sin\s+preferencia\s+de\s+zona|no\s+importa\s+la\s+zona|"
+    r"no\s+me\s+importa\s+(?:la\s+)?zona|"
+    r"toda\s+la\s+ciudad|en\s+cualquier\s+parte|"
+    r"no\s+tengo\s+ubicaci[oó]n\s+definida|sin\s+ubicaci[oó]n\s+definida"
+    r")\b",
+    re.I,
 )
+
+_BEDROOM_SIGNAL_RE = re.compile(
+    r"\b("
+    r"\d+\s*(?:ó|o|or|y|a|-)\s*\d+\b|"
+    r"\d+\s*(?:ó|o|or|y)\s*m[aá]s\s*dormitorios?|"
+    r"m[aá]s\s+de\s+\d+\s*dorm(?:itorios?)?|"
+    r"\d+\s*\+\s*dorm(?:itorios?)?|"
+    r"\d+\s*(?:dormitorios?|dorm\.?|ambientes?)|"
+    r"mono\s*amb(?:iente)?|"
+    r"(?:un|una|dos|tres|cuatro|cinco|seis)\s+dormitorios?|"
+    r"(?:un|una|dos|tres|cuatro)\s+ambientes?"
+    r")\b",
+    re.I,
+)
+
+_BUDGET_USD_RE = re.compile(
+    r"(?:"
+    r"us\s*\$?\s*[\d.,]+|"
+    r"usd\s*[\d.,]+|"
+    r"\$\s*[\d.,]+\s*(?:usd|d[oó]lares?)?|"
+    r"presupuesto\s*(?:de\s+)?[\d.,]+|"
+    r"tengo\s+[\d.,]{4,}|"
+    r"[\d]{2,3}[.,]?\d{3}\s*(?:usd|d[oó]lares?)?"
+    r")",
+    re.I,
+)
+
+
+def user_declined_zone_preference(user_messages_text: str) -> bool:
+    return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
+
+
+def user_has_budget_usd(user_messages_text: str) -> bool:
+    return bool(_BUDGET_USD_RE.search(user_messages_text))
 
 CatalogBranch = Literal["compra", "alquiler"]
 PropertyType = Literal["casa", "departamento"]
@@ -117,7 +161,7 @@ class SearchProfile:
 
 
 def build_search_profile(
-    history: list[HistoryTurn],
+    capture_data: dict[str, Any] | None,
     current_user_text: str,
     flow_path: str,
 ) -> SearchProfile:
@@ -125,7 +169,10 @@ def build_search_profile(
     if branch not in ("compra", "alquiler"):
         return SearchProfile(branch="compra", missing_fields=_INTAKE_ORDER_COMPRA)
 
-    blob = user_messages_for_flow(history, current_user_text, flow_path)
+    existing = load_search_profile_from_capture(capture_data or {}, branch=branch)
+    blob = user_messages_for_flow(current_user_text, flow_path, capture_data)
+    if existing and existing.criteria_blob():
+        blob = f"{existing.criteria_blob()} {blob}".strip()
     criteria = parse_search_criteria(blob, branch=branch)
 
     property_type: PropertyType | None = None
@@ -177,6 +224,19 @@ def merge_search_profile_into_capture(
     merged = dict(capture_data or {})
     merged["search_profile"] = profile.to_dict()
     return merged
+
+
+def user_search_profile_ready(
+    current_user_text: str,
+    flow_path: str,
+    capture_data: dict[str, Any] | None = None,
+) -> bool:
+    path = (flow_path or "").strip().lower()
+    if path not in ("compra", "alquiler"):
+        return True
+    return build_search_profile(
+        capture_data, current_user_text, flow_path
+    ).is_complete
 
 
 def load_search_profile_from_capture(
