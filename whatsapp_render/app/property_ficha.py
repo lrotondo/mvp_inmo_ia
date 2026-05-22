@@ -193,54 +193,69 @@ def collect_media_link_buttons(
     include_preview_cta: bool = False,
 ) -> list[MediaLinkButton]:
     """
-    Botones CTA: álbum (url_link_fotos), video, tour.
-    foto_principal va en mensaje imagen; no se duplica salvo include_preview_cta.
+    Botones CTA: álbum (url_link_fotos / Instagram), video, tour.
+    foto_principal va en mensaje imagen; galería externa y video siempre como botón si existen.
     """
     primary = primary_photo_url(row).strip()
     gallery = gallery_photo_url(row).strip()
     video = property_video_url(row).strip()
     tour = tour_360_url(row).strip()
+
+    _photo, external_gallery, video_url, tour_url = _resolve_media_urls(
+        row, prefer_primary_preview=prefer_primary_preview
+    )
     buttons: list[MediaLinkButton] = []
+    seen_urls: set[str] = set()
 
-    if include_preview_cta and primary:
+    def _add(url: str, kind: str) -> None:
+        u = (url or "").strip()
+        if not u or u in seen_urls:
+            return
+        seen_urls.add(u)
         buttons.append(
-            MediaLinkButton(friendly_cta_label_for_url(primary, kind="preview"), primary)
+            MediaLinkButton(friendly_cta_label_for_url(u, kind=kind), u)
         )
 
-    if gallery and gallery != primary:
+    if include_preview_cta and _photo:
+        _add(_photo, "preview")
+
+    if external_gallery:
+        kind = "instagram" if "instagram" in external_gallery.lower() else "album"
+        _add(external_gallery, kind)
+    elif gallery and (
+        gallery != primary
+        or is_social_or_page_url(gallery)
+        or not is_likely_direct_image_url(gallery)
+    ):
         kind = "instagram" if "instagram" in gallery.lower() else "album"
-        buttons.append(
-            MediaLinkButton(friendly_cta_label_for_url(gallery, kind=kind), gallery)
-        )
-    elif gallery and not primary:
-        kind = "instagram" if "instagram" in gallery.lower() else "album"
-        buttons.append(
-            MediaLinkButton(friendly_cta_label_for_url(gallery, kind=kind), gallery)
-        )
+        _add(gallery, kind)
 
-    if video:
-        buttons.append(
-            MediaLinkButton(friendly_cta_label_for_url(video, kind="video"), video)
-        )
-    if tour:
-        buttons.append(
-            MediaLinkButton(friendly_cta_label_for_url(tour, kind="tour"), tour)
-        )
+    _add(video_url or video, "video")
+    _add(tour_url or tour, "tour")
 
     if not buttons:
         for url, kind in (
             (gallery, "album"),
-            (primary, "preview"),
             (video, "video"),
             (tour, "tour"),
+            (primary, "preview"),
         ):
             if url:
-                buttons.append(
-                    MediaLinkButton(friendly_cta_label_for_url(url, kind=kind), url)
-                )
+                _add(url, kind)
                 break
 
     return buttons
+
+
+def format_media_urls_text_fallback(row: dict[str, Any]) -> str:
+    """Fallback si los botones CTA fallan: etiquetas + URLs con preview de WhatsApp."""
+    buttons = collect_media_link_buttons(row, include_preview_cta=False)
+    if not buttons:
+        return ""
+    lines = ["Material visual:"]
+    for btn in buttons:
+        lines.append(f"• {btn.label}: {btn.url}")
+    return "\n".join(lines)
 
 
 def build_detail_media_intro(

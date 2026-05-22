@@ -73,8 +73,9 @@ El catálogo solo posee inmuebles disponibles.
 
 2. DETALLE DE UNA PROPIEDAD:
    - Si el cliente pide ampliar información, detalles o fotos de UNA propiedad específica, enfócate únicamente en esa fila correspondiente usando su ID o Dirección.
+   - **Prohibido** usar `[LISTADO:ids]` en detalle (solo para listar varias opciones).
    - Responde con un enganche cálido y ameno (Ej: "¡Excelente elección! Acá te paso la ficha y material visual 👇").
-   - El backend adjuntará la foto y los botones de acción dinámicamente; no escribas URLs crudas ni uses sintaxis markdown de enlace.
+   - El backend adjuntará la foto principal y botones (galería / video / tour); no escribas URLs crudas ni repitas la ficha en texto.
 """.strip()
 
 MASTER_PREFIX_TEMPLATE = """

@@ -26,6 +26,7 @@ from app.property_ficha import (
     collect_media_link_buttons,
     extract_detail_tail,
     format_media_buttons_for_history,
+    format_media_urls_text_fallback,
     replace_markdown_links_with_labels,
 )
 from app.session_state import user_wants_fresh_start
@@ -119,6 +120,15 @@ def user_requests_property_detail(current_user_text: str) -> bool:
 
 def user_reports_missing_media(current_user_text: str) -> bool:
     return bool(_MISSING_MEDIA_RE.search((current_user_text or "").strip()))
+
+
+def user_wants_specific_property_detail(current_user_text: str) -> bool:
+    """Detalle de UNA propiedad (más info, me gusta la de X, fotos)."""
+    return (
+        user_requests_property_detail(current_user_text)
+        or user_showed_property_interest(current_user_text)
+        or user_reports_missing_media(current_user_text)
+    )
 
 
 def user_showed_property_interest(current_user_text: str) -> bool:
@@ -568,6 +578,7 @@ async def _deliver_property_media_ctas(
         return ""
 
     intro = build_detail_media_intro(row)
+    sent_any = False
     for index, btn in enumerate(buttons):
         if index == 0 and intro:
             body = intro
@@ -575,16 +586,39 @@ async def _deliver_property_media_ctas(
             body = "Tocá el botón para abrir 👇"
         else:
             body = f"Tocá *{btn.label}* 👇"
-        await send_whatsapp_cta_url_message(
+        try:
+            await send_whatsapp_cta_url_message(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                to_wa_id=to_wa_id,
+                body_text=body,
+                button_label=btn.label,
+                url=btn.url,
+                graph_version=graph_version,
+            )
+            sent_any = True
+        except Exception:
+            logger.exception(
+                "CTA fallo id=%s label=%s; se intentara fallback texto",
+                row.get("ID"),
+                btn.label,
+            )
+
+    if sent_any:
+        return format_media_buttons_for_history(buttons)
+
+    fallback = format_media_urls_text_fallback(row)
+    if fallback:
+        await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
-            body_text=body,
-            button_label=btn.label,
-            url=btn.url,
+            message=fallback,
             graph_version=graph_version,
+            preview_url=True,
         )
-    return format_media_buttons_for_history(buttons)
+        return fallback
+    return ""
 
 
 async def try_deliver_single_property_visual(

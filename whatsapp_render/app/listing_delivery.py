@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.catalog import get_properties_by_ids, primary_photo_url
-from app.detail_media import try_deliver_single_property_visual
+from app.detail_media import (
+    try_deliver_single_property_visual,
+    user_wants_specific_property_detail,
+)
 from app.lead_context import user_search_profile_ready
 from app.property_ficha import build_property_ficha
 from app.meta_client import (
@@ -177,8 +180,29 @@ async def deliver_bot_response(
     )
 
     parsed_listado = parse_listado_tag(body)
+    detail_intent = user_wants_specific_property_detail(current_user_text)
 
-    # Listado multi-opción tiene prioridad; no usar envío de detalle (1 foto + tag en caption).
+    # Detalle de una propiedad: prioridad sobre [LISTADO] (evita "Opción 1" y tag visible).
+    if detail_intent:
+        detail_body = strip_listado_tags(body)
+        visual_sent = await try_deliver_single_property_visual(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to_wa_id=to_wa_id,
+            message=detail_body,
+            catalog_csv_path=catalog_csv_path,
+            current_user_text=current_user_text,
+            flow_path=flow_path,
+            history=history,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            property_ref=property_ref,
+            graph_version=graph_version,
+        )
+        if visual_sent is not None:
+            return strip_listado_tags(visual_sent)
+
+    # Listado multi-opción: no usar envío de detalle (1 foto + tag en caption).
     if parsed_listado is None:
         visual_sent = await try_deliver_single_property_visual(
             access_token=access_token,
