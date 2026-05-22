@@ -64,6 +64,7 @@ async def process_inbound_message(
         catalog_sale_path=ctx.catalog_csv_path,
         catalog_rent_path=ctx.catalog_rent_csv_path,
         system_prompt_override=ctx.system_prompt,
+        capture_data=dict(session.capture_data),
     )
     plan = plan_turn(turn_ctx, history, user_text)
 
@@ -91,7 +92,7 @@ async def process_inbound_message(
         if choice_ref.strip():
             property_ref = choice_ref.strip()
 
-    if not property_ref:
+    if not property_ref and not (plan.kind == TurnKind.DETAIL and listing_rows):
         property_ref = extract_property_ref(
             "",
             flow_path=flow_path,
@@ -125,7 +126,7 @@ async def process_inbound_message(
             flow_path=flow_path,
         )
 
-    capture_data: dict[str, Any] | None = None
+    capture_data: dict[str, Any] = dict(session.capture_data)
     if plan.profile and flow_path in ("compra", "alquiler"):
         capture_data = session_capture_with_profile(session, plan.profile, flow_path)
     if plan.kind == TurnKind.LISTING and plan.candidate_ids:

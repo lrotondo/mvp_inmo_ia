@@ -112,6 +112,20 @@ def message_offers_property_video(text: str) -> bool:
     return bool(re.search(r"\[(?:🎥\s*)?Ver\s+video\]", text or "", re.I))
 
 
+_MORE_PHOTOS_RE = re.compile(
+    r"\b(?:m[aá]s\s+)?fotos?|galer[ií]a|videos?\b",
+    re.I,
+)
+
+
+def user_requests_more_photos(current_user_text: str) -> bool:
+    """Pide material visual sin expresar elección final (opción 2, la segunda)."""
+    text = (current_user_text or "").strip()
+    if not text or not _MORE_PHOTOS_RE.search(text):
+        return False
+    return not user_showed_property_interest(text)
+
+
 def user_requests_property_detail(current_user_text: str) -> bool:
     text = (current_user_text or "").strip()
     return bool(

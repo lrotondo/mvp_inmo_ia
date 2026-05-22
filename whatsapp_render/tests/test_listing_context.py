@@ -37,6 +37,18 @@ def test_resolve_duplex_from_listing_scope() -> None:
     assert row["ID"] == "12"
 
 
+def test_resolve_la_segunda_from_listing_scope() -> None:
+    row = resolve_listing_choice_row("tenes mas fotos de la segunda?", MOCK_ROWS)
+    assert row is not None
+    assert row["ID"] == "11"
+
+
+def test_resolve_opcion_2_phrase() -> None:
+    row = resolve_listing_choice_row("mas fotos de la opcion 2?", MOCK_ROWS)
+    assert row is not None
+    assert row["ID"] == "11"
+
+
 def test_property_ref_from_listing_choice() -> None:
     ref = property_ref_from_listing_choice("me interesa la opción 2", MOCK_ROWS)
     assert ref == "11"

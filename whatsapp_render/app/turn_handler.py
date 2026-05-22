@@ -9,7 +9,11 @@ from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
 from app.catalog_search import select_listing_candidates
 from app.conversation import HistoryTurn, build_model_messages
 from app.llm.deepseek import chat_completion, chat_short
-from app.detail_media import user_wants_specific_property_detail
+from app.detail_media import (
+    user_requests_more_photos,
+    user_wants_specific_property_detail,
+)
+from app.visit_intent import conversation_wants_visit, conversation_wants_visit_rent
 from app.property_matching import extract_property_ref
 from app.prompts.flow_master import build_turn_system_prompt
 from app.search_profile import (
@@ -45,6 +49,7 @@ class TurnContext:
     catalog_sale_path: str | None
     catalog_rent_path: str | None
     system_prompt_override: str | None = None
+    capture_data: dict[str, Any] | None = None
 
 
 @dataclass
@@ -75,6 +80,10 @@ def resolve_turn_kind(
     if path == "nuevo":
         return TurnKind.TRIAGE
     if path in ("compra", "alquiler"):
+        if path == "alquiler" and conversation_wants_visit_rent(current_user_text):
+            return TurnKind.GENERAL
+        if path == "compra" and conversation_wants_visit(current_user_text):
+            return TurnKind.GENERAL
         if user_wants_specific_property_detail(current_user_text):
             return TurnKind.DETAIL
         if profile and profile.is_complete:
@@ -204,10 +213,15 @@ async def build_detail_outbound(
     from app.listing_context import resolve_listing_choice_row
 
     row = resolve_listing_choice_row(user_text, listing_rows)
-    if row is not None:
-        titulo = str(row.get("Titulo", "")).strip()
+    titulo = str(row.get("Titulo", "")).strip() if row else ""
+
+    if user_requests_more_photos(user_text):
         if titulo:
-            return f"¡Excelente elección! Te paso la ficha de *{titulo}* 👇"
+            return f"Te comparto más fotos y el detalle de *{titulo}* 👇"
+        return "Te comparto más fotos y el detalle de esa opción 👇"
+
+    if titulo:
+        return f"¡Excelente elección! Te paso la ficha de *{titulo}* 👇"
     return "¡Excelente elección! Te paso la ficha con todos los detalles 👇"
 
 
@@ -226,7 +240,10 @@ async def generate_turn_reply(
     if plan.kind == TurnKind.DETAIL:
         from app.listing_context import load_last_listing_rows
 
-        rows = load_last_listing_rows(plan.catalog_path_used, None)
+        rows = load_last_listing_rows(
+            plan.catalog_path_used,
+            ctx.capture_data,
+        )
         return await build_detail_outbound(user_text, listing_rows=rows)
 
     catalog_block = ""

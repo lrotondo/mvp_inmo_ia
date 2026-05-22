@@ -13,6 +13,21 @@ _OPTION_NUMBER_RE = re.compile(
     r"\b(?:opci[oó]n|la\s+opci[oó]n|el\s+de|la\s+de)\s*(?:n[°º]?\s*)?(\d+)\b",
     re.I,
 )
+_LA_N_RE = re.compile(r"\bla\s+(\d+)\b", re.I)
+_ORDINAL_WORD_RE = re.compile(
+    r"\b(?:la|el)?\s*(primera|segunda|tercera|cuarta|primer|segundo|tercer|cuarto)\b",
+    re.I,
+)
+_ORDINAL_TO_INDEX: dict[str, int] = {
+    "primera": 1,
+    "primer": 1,
+    "segunda": 2,
+    "segundo": 2,
+    "tercera": 3,
+    "tercer": 3,
+    "cuarta": 4,
+    "cuarto": 4,
+}
 _TYPE_HINT_RE = re.compile(
     r"\b(duplex|d[uú]plex|departamento|depto|casa|ph)\b",
     re.I,
@@ -87,6 +102,26 @@ def _score_row_for_choice(user_norm: str, row: dict[str, Any]) -> int:
     return score
 
 
+def _listing_index_from_text(text: str) -> int | None:
+    """Índice 1-based dentro del último listado (opción 2, la segunda, la 2)."""
+    match = _OPTION_NUMBER_RE.search(text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            pass
+    match = _LA_N_RE.search(text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            pass
+    match = _ORDINAL_WORD_RE.search(text)
+    if match:
+        return _ORDINAL_TO_INDEX.get(match.group(1).lower())
+    return None
+
+
 def resolve_listing_choice_row(
     user_text: str,
     listing_rows: list[dict[str, Any]],
@@ -99,14 +134,9 @@ def resolve_listing_choice_row(
     if not text:
         return None
 
-    match = _OPTION_NUMBER_RE.search(text)
-    if match:
-        try:
-            index = int(match.group(1))
-        except ValueError:
-            index = 0
-        if 1 <= index <= len(listing_rows):
-            return listing_rows[index - 1]
+    index = _listing_index_from_text(text)
+    if index is not None and 1 <= index <= len(listing_rows):
+        return listing_rows[index - 1]
 
     user_norm = _normalize_property_match_text(text)
     best: dict[str, Any] | None = None
@@ -136,13 +166,7 @@ def property_ref_from_listing_option_number(
     user_text: str,
     listing_rows: list[dict[str, Any]],
 ) -> str:
-    match = _OPTION_NUMBER_RE.search((user_text or "").strip())
-    if not match:
-        return ""
-    try:
-        index = int(match.group(1))
-    except ValueError:
-        return ""
-    if index < 1 or index > len(listing_rows):
+    index = _listing_index_from_text((user_text or "").strip())
+    if index is None or index < 1 or index > len(listing_rows):
         return ""
     return str(listing_rows[index - 1].get("ID", "")).strip()
