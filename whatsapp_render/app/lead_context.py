@@ -112,6 +112,28 @@ _NO_DEFINED_ZONE_RE = re.compile(
     re.I,
 )
 
+_ZONE_SIGNAL_RE = re.compile(
+    r"\b("
+    r"barrio|zona|centro|microcentro|norte|sur|este|oeste|"
+    r"country|los\s+nogales|garibaldi|mitre|"
+    r"en\s+(?!alquiler|venta|compra\b)(?:el\s+|la\s+)?[a-záéíóúñ]{3,}|"
+    r"por\s+[a-záéíóúñ]{3,}|"
+    r"cerca\s+de|"
+    r"tandil"
+    r")\b",
+    re.I,
+)
+
+_BEDROOM_SIGNAL_RE = re.compile(
+    r"\b("
+    r"\d+\s*(?:dormitorios?|dorm\.?|ambientes?)|"
+    r"mono\s*amb(?:iente)?|"
+    r"(?:un|una|dos|tres|cuatro|cinco|seis)\s+dormitorios?|"
+    r"(?:un|una|dos|tres|cuatro)\s+ambientes?"
+    r")\b",
+    re.I,
+)
+
 
 def lead_type_from_flow_path(flow_path: str) -> LeadType:
     path = (flow_path or "").strip().lower()
@@ -204,6 +226,30 @@ def should_suppress_visit_alerts(
 
 def user_declined_zone_preference(user_messages_text: str) -> bool:
     return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
+
+
+def user_search_profile_ready(
+    history: list[HistoryTurn],
+    current_user_text: str,
+    flow_path: str,
+) -> bool:
+    """
+    True si el cliente ya indicó zona (o «cualquier zona») y cantidad de dormitorios/ambientes.
+    Puerta para listados y material visual: evita mostrar stock antes de indagar.
+    """
+    path = (flow_path or "").strip().lower()
+    if path not in ("compra", "alquiler"):
+        return True
+
+    blob = user_messages_for_flow(history, current_user_text, flow_path)
+    if not blob.strip():
+        return False
+
+    has_zone = user_declined_zone_preference(blob) or bool(
+        _ZONE_SIGNAL_RE.search(blob)
+    )
+    has_beds = bool(_BEDROOM_SIGNAL_RE.search(blob))
+    return has_zone and has_beds
 
 
 _STREET_AL_RE = re.compile(r"\s+al\s+", re.I)

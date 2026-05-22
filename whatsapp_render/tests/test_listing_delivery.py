@@ -111,6 +111,8 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
                 to_wa_id="54911",
                 message=msg,
                 catalog_csv_path=TENANT_RENT,
+                current_user_text="centro, 2 dormitorios",
+                flow_path="alquiler",
             )
             assert mock_text.await_count >= 2
             assert mock_image.await_count == 2

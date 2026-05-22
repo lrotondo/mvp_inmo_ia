@@ -8,6 +8,7 @@ from typing import Any
 
 from app.catalog import get_properties_by_ids, primary_photo_url
 from app.detail_media import try_deliver_single_property_visual
+from app.lead_context import user_search_profile_ready
 from app.property_ficha import build_property_ficha
 from app.meta_client import (
     is_public_https_image_url,
@@ -18,6 +19,12 @@ from app.meta_client import (
 logger = logging.getLogger(__name__)
 
 _LISTADO_TAG_RE = re.compile(r"\[LISTADO:([^\]]+)\]", re.I)
+_CATALOG_ESSAY_LINE_RE = re.compile(
+    r"\|\s*Precio:|\*Características|dormitorios\s*\||"
+    r"Living\s+comedor|toilette|baño\s+en\s+suite|"
+    r"Departamento\s+a\s+estrenar|tercer\s+piso\s+por\s+ascensor",
+    re.I,
+)
 _MAX_LISTING_ITEMS = 3
 
 
@@ -32,6 +39,54 @@ class ParsedListado:
 def listing_image_delivery_enabled() -> bool:
     raw = os.environ.get("LISTING_IMAGE_DELIVERY", "true").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def _strip_catalog_essay_lines(text: str) -> str:
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        if _CATALOG_ESSAY_LINE_RE.search(line):
+            continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def suppress_premature_catalog_outbound(
+    message: str,
+    *,
+    history: list | None,
+    current_user_text: str,
+    flow_path: str,
+) -> str:
+    """
+    Quita listados y fichas si el cliente aún no dio zona + dormitorios.
+    El LLM a veces ignora el prompt; el backend no envía fotos ni IDs.
+    """
+    if user_search_profile_ready(
+        history or [],
+        current_user_text,
+        flow_path,
+    ):
+        return (message or "").strip()
+
+    body = (message or "").strip()
+    if not body:
+        return body
+
+    parsed = parse_listado_tag(body)
+    if parsed is not None:
+        parts = [p for p in (parsed.intro, parsed.closing) if p.strip()]
+        cleaned = _strip_catalog_essay_lines("\n\n".join(parts).strip())
+        logger.info(
+            "listado_suprimido flow=%s (perfil sin zona+dormitorios)",
+            flow_path,
+        )
+        return cleaned or body
+
+    if _LISTADO_TAG_RE.search(body):
+        body = _LISTADO_TAG_RE.sub("", body).strip()
+
+    cleaned = _strip_catalog_essay_lines(body)
+    return cleaned or body
 
 
 def parse_listado_tag(text: str) -> ParsedListado | None:
@@ -108,6 +163,12 @@ async def deliver_bot_response(
     Retorna texto consolidado para historial / detección de handoff.
     """
     body = (message or "").strip() or "No pude generar una respuesta en este momento."
+    body = suppress_premature_catalog_outbound(
+        body,
+        history=history,
+        current_user_text=current_user_text,
+        flow_path=flow_path,
+    )
 
     visual_sent = await try_deliver_single_property_visual(
         access_token=access_token,

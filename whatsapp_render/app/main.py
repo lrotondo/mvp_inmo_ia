@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
 from app.catalog import get_catalog_for_flow
+from app.lead_context import user_search_profile_ready
+from app.listing_delivery import suppress_premature_catalog_outbound
 from app.conversation import (
     append_conversation_turn,
     build_model_messages,
@@ -539,7 +541,17 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             catalog_path_used,
             row_count,
         )
-        if row_count:
+        profile_ready = user_search_profile_ready(
+            history, user_text, flow_path
+        )
+        if flow_path in ("compra", "alquiler") and not profile_ready:
+            catalog_block = (
+                "(Catálogo oculto hasta que el cliente indique zona/barrio y "
+                "cantidad de dormitorios o ambientes. No menciones propiedades, "
+                "direcciones, precios ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
+            )
+            row_count = 0
+        elif row_count:
             catalog_block = (
                 f"({row_count} propiedades; elegí las más relevantes):\n{catalog_block}"
             )
@@ -594,6 +606,12 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             current_user_text=user_text,
         )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
+        clean_answer = suppress_premature_catalog_outbound(
+            clean_answer,
+            history=history,
+            current_user_text=user_text,
+            flow_path=flow_path,
+        )
         clean_answer = enrich_detail_media_from_catalog(
             clean_answer,
             catalog_csv_path=catalog_path_used,

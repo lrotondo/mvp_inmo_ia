@@ -12,7 +12,7 @@ from app.catalog import (
     primary_photo_url,
     property_video_url,
 )
-from app.lead_context import extract_property_ref
+from app.lead_context import extract_property_ref, user_search_profile_ready
 from app.media_urls import detail_image_url
 from app.meta_client import (
     is_public_https_image_url,
@@ -140,17 +140,31 @@ def should_deliver_property_detail_ficha(
     row: dict[str, Any] | None,
     outbound_message: str,
     current_user_text: str,
+    history: list | None = None,
 ) -> bool:
     """Hay fila de catálogo y contexto de detalle / propiedad elegida."""
     path = (flow_path or "").strip().lower()
     if path in ("nuevo", "captacion") or row is None:
         return False
     if (property_ref or "").strip():
+        if path in ("compra", "alquiler") and not user_search_profile_ready(
+            history or [],
+            current_user_text,
+            flow_path,
+        ):
+            explicit = (
+                user_requests_property_detail(current_user_text)
+                or user_reports_missing_media(current_user_text)
+                or user_showed_property_interest(current_user_text)
+            )
+            if not explicit:
+                return False
         return True
     return should_enrich_property_detail(
         outbound_message=outbound_message,
         current_user_text=current_user_text,
         flow_path=flow_path,
+        history=history,
     )
 
 
@@ -159,6 +173,7 @@ def should_enrich_property_detail(
     outbound_message: str,
     current_user_text: str,
     flow_path: str,
+    history: list | None = None,
 ) -> bool:
     """Ficha + material visual: detalle, elección de propiedad o promesa del bot."""
     path = (flow_path or "").strip().lower()
@@ -169,6 +184,19 @@ def should_enrich_property_detail(
 
     body = (outbound_message or "").strip()
     if _LISTADO_TAG_RE.search(body):
+        return False
+
+    profile_ready = user_search_profile_ready(
+        history or [],
+        current_user_text,
+        flow_path,
+    )
+    explicit_detail = (
+        user_requests_property_detail(current_user_text)
+        or user_reports_missing_media(current_user_text)
+        or user_showed_property_interest(current_user_text)
+    )
+    if path in ("compra", "alquiler") and not profile_ready and not explicit_detail:
         return False
 
     if user_requests_property_detail(current_user_text):
@@ -471,6 +499,7 @@ def enrich_detail_media_from_catalog(
         outbound_message=body,
         current_user_text=current_user_text,
         flow_path=flow_path,
+        history=history,
     ):
         cleaned = strip_property_media_from_message(body)
         if cleaned != body:
@@ -592,6 +621,7 @@ async def try_deliver_single_property_visual(
         row=row,
         outbound_message=body,
         current_user_text=current_user_text,
+        history=history,
     ):
         return None
 
