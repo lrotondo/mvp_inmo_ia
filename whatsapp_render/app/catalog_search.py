@@ -87,13 +87,22 @@ def parse_bedrooms_from_row(row: dict[str, Any]) -> int | None:
 
 
 def _parse_min_bedrooms(blob: str) -> int:
-    match = _USER_MIN_BEDS_RE.search(blob)
-    if not match:
+    range_match = re.search(
+        r"(\d+)\s*(?:o|u|ó|-|a|y)\s*(\d+)\s*dormitorios?",
+        blob,
+        re.I,
+    )
+    if range_match:
+        return min(int(range_match.group(1)), int(range_match.group(2)))
+
+    values: list[int] = []
+    for match in _USER_MIN_BEDS_RE.finditer(blob):
+        for group in match.groups():
+            if group and group.isdigit():
+                values.append(int(group))
+    if not values:
         return 0
-    for group in match.groups():
-        if group and group.isdigit():
-            return int(group)
-    return 0
+    return min(values)
 
 
 def _parse_max_budget_usd(blob: str) -> int | None:
@@ -146,11 +155,31 @@ def _classify_row_property_kind(row: dict[str, Any]) -> str | None:
     return None
 
 
+_ZONE_TOKEN_STOPWORDS = frozenset(
+    {
+        "alquiler",
+        "compra",
+        "venta",
+        "quiero",
+        "ideas",
+        "ver",
+        "casa",
+        "departamento",
+        "depto",
+    }
+)
+
+
 def _parse_zone_tokens(blob: str) -> tuple[str, ...]:
     tokens: list[str] = []
     for match in _ZONE_TOKEN_RE.finditer(blob):
         token = match.group(1).strip().lower()
-        if len(token) >= 3 and token not in tokens:
+        token = token.split("\n")[0].strip()
+        if len(token) < 3 or len(token) > 32:
+            continue
+        if token in _ZONE_TOKEN_STOPWORDS:
+            continue
+        if token not in tokens:
             tokens.append(token)
     return tuple(tokens)
 

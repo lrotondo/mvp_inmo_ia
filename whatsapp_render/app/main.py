@@ -654,7 +654,6 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         if (
             flow_path in ("compra", "alquiler")
             and profile_ready
-            and candidate_ids
             and not user_wants_specific_property_detail(user_text)
         ):
             clean_answer = ensure_listado_from_candidates(

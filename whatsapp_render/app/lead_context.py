@@ -105,8 +105,10 @@ _PROPERTY_CHOICE_RE = re.compile(
 
 _NO_DEFINED_ZONE_RE = re.compile(
     r"\b("
-    r"no\s+tengo\s+zona|no\s+tengo\s+preferencia\s+de\s+zona|"
-    r"sin\s+zona\s+definida|no\s+tengo\s+barrio|"
+    r"no\s+tengo\s+zona|no\s+tengo\s+zonas?|"
+    r"no\s+tengo\s+preferencia\s+de\s+zona|no\s+tengo\s+zonas?\s+preferid[ao]s?|"
+    r"sin\s+zona\s+definida|sin\s+zonas?\s+preferid[ao]s?|"
+    r"no\s+tengo\s+barrio|"
     r"cualquier\s+zona|cualquier\s+barrio|"
     r"sin\s+preferencia\s+de\s+zona|no\s+importa\s+la\s+zona|"
     r"no\s+me\s+importa\s+(?:la\s+)?zona|"

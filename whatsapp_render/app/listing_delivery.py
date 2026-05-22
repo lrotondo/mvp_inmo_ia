@@ -31,13 +31,18 @@ _CATALOG_ESSAY_LINE_RE = re.compile(
 _INVENTED_LISTING_LINE_RE = re.compile(
     r"(?:"
     r"USD\s*[\d.,]+|US\$[\d.,]+|"
+    r"\$\s*[\d.,]+\s*/?\s*mes|"
+    r"[\d.,]+\s*/?\s*mes|"
     r"\*?\s*Zona\s+(?:Norte|Sur|Oeste|Este)\*?|"
-    r"Casa\s+en\s+\*?Zona|"
-    r"Depto\s+en\s+\*?Zona|"
-    r"\d+\s*dormitorios?.*(?:USD|US\$)|"
+    r"(?:Casa|Depto|Departamento)\s+en\s+\*?|"
+    r"\d+\s*dormitorios?.*(?:USD|US\$|\$|/mes)|"
     r"Precio\s+USD\s*[\d.,]+|"
     r"Precio\s+mensual\s+ARS"
     r")",
+    re.I,
+)
+_NUMBERED_PROPERTY_LINE_RE = re.compile(
+    r"^\s*\d+[\.\)]\s*\*?(?:Casa|Depto|Departamento|Duplex)\b",
     re.I,
 )
 _MAX_LISTING_ITEMS = 3
@@ -65,10 +70,28 @@ def _strip_catalog_essay_lines(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
+def _line_looks_invented_property(stripped: str) -> bool:
+    if not stripped:
+        return False
+    if _NUMBERED_PROPERTY_LINE_RE.match(stripped):
+        return True
+    if _INVENTED_LISTING_LINE_RE.search(stripped) and re.search(r"\d", stripped):
+        return True
+    if re.search(
+        r"\b(?:casa|depto|departamento)\s+en\s+[^|\n]{3,}",
+        stripped,
+        re.I,
+    ) and re.search(r"[\d$]", stripped):
+        return True
+    return False
+
+
 def strip_invented_listings(message: str) -> str:
     """Quita viñetas en prosa con precios/zonas inventadas (sin [LISTADO:])."""
     body = (message or "").strip()
-    if not body or _LISTADO_TAG_RE.search(body):
+    if not body:
+        return body
+    if _LISTADO_TAG_RE.search(body):
         return _strip_catalog_essay_lines(body)
 
     kept: list[str] = []
@@ -77,12 +100,7 @@ def strip_invented_listings(message: str) -> str:
         if not stripped:
             kept.append(line)
             continue
-        is_bullet = bool(re.match(r"^[-•*]\s+", stripped))
-        if is_bullet and _INVENTED_LISTING_LINE_RE.search(stripped):
-            continue
-        if _INVENTED_LISTING_LINE_RE.search(stripped) and re.search(
-            r"\d", stripped
-        ):
+        if _line_looks_invented_property(stripped):
             continue
         kept.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
@@ -113,7 +131,13 @@ def ensure_listado_from_candidates(
     """
     ids = [pid.strip() for pid in candidate_ids if pid.strip()][:_MAX_LISTING_ITEMS]
     if not ids:
-        return strip_invented_listings(message)
+        cleaned = strip_invented_listings(message)
+        if cleaned and not _line_looks_invented_property(cleaned):
+            return cleaned
+        return (
+            "Por ahora no tengo opciones en catálogo que coincidan exactamente con lo que "
+            "pediste. ¿Querés ampliar zona, tipo o presupuesto para buscar de nuevo?"
+        )
 
     body = strip_invented_listings(message)
     parsed = parse_listado_tag(body)
@@ -184,7 +208,7 @@ def suppress_premature_catalog_outbound(
     if _LISTADO_TAG_RE.search(body):
         body = _LISTADO_TAG_RE.sub("", body).strip()
 
-    cleaned = _strip_catalog_essay_lines(body)
+    cleaned = strip_invented_listings(_strip_catalog_essay_lines(body))
     return cleaned or body
 
 
