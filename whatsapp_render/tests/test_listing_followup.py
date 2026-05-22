@@ -45,7 +45,7 @@ def test_option_number_alone_is_detail_not_general() -> None:
     assert kind == TurnKind.DETAIL
 
 
-def test_reject_all_goes_waitlist() -> None:
+def test_reject_all_goes_waitlist_intake() -> None:
     capture = {"last_listing": {"ids": ["1", "2", "3"], "catalog_path": "x"}}
     kind = resolve_turn_kind(
         "alquiler",
@@ -54,7 +54,25 @@ def test_reject_all_goes_waitlist() -> None:
         capture_data=capture,
         catalog_path_used="x",
     )
-    assert kind == TurnKind.WAITLIST
+    assert kind == TurnKind.WAITLIST_INTAKE
+
+
+def test_waitlist_answered_goes_confirm() -> None:
+    capture = {
+        "last_listing": {"ids": ["1"], "catalog_path": "x"},
+        "waitlist_pending": True,
+        "waitlist_prompt_sent": True,
+        "waitlist_answered": True,
+        "waitlist_raw_text": "depto 2 dorm centro hasta 300000",
+    }
+    kind = resolve_turn_kind(
+        "compra",
+        profile=_complete_profile(),
+        current_user_text="depto 2 dorm centro hasta 300000",
+        capture_data=capture,
+        catalog_path_used="x",
+    )
+    assert kind == TurnKind.WAITLIST_CONFIRM
 
 
 def test_fresh_listing_request_stays_listing() -> None:

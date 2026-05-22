@@ -68,4 +68,4 @@ def test_decide_waitlist_when_rejects_listing() -> None:
         capture_data=capture,
         catalog_path="data/x.csv",
     )
-    assert phase == Phase.WAITLIST
+    assert phase == Phase.WAITLIST_INTAKE

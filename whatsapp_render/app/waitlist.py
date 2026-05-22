@@ -79,15 +79,16 @@ def _parse_classifier_json(raw: str) -> WaitlistRequirements | None:
     )
 
 
-def requirements_from_profile_fallback(
+def requirements_from_text_fallback(
     *,
-    intake_text: str,
+    waitlist_raw_text: str,
     seek_type: str,
+    intake_text: str = "",
     listing_summary: str = "",
 ) -> WaitlistRequirements:
-    text = (intake_text or "").strip()
+    text = (waitlist_raw_text or intake_text or "").strip()
     summary_parts = [p for p in (text, listing_summary) if p]
-    summary = ". ".join(summary_parts) or "Búsqueda sin match en catálogo."
+    summary = ". ".join(summary_parts) or "Requisitos según conversación del cliente."
     return WaitlistRequirements(
         zona="",
         presupuesto="",
@@ -99,28 +100,36 @@ def requirements_from_profile_fallback(
     )
 
 
-async def classify_waitlist_requirements(
+# Alias compat
+requirements_from_profile_fallback = requirements_from_text_fallback
+
+
+async def summarize_waitlist_requirements(
     *,
     seek_type: str,
-    intake_text: str,
-    user_messages: str,
+    waitlist_raw_text: str,
+    intake_text: str = "",
     listing_summary: str = "",
     log_context: dict | None = None,
 ) -> WaitlistRequirements:
+    """Resume requisitos desde la respuesta libre del cliente a la pregunta bundle."""
     system = (
-        "Clasificador de lista de espera inmobiliaria. Respondé SOLO JSON con claves: "
-        "zona, presupuesto, ambientes, preferencias, notas, requirements_summary, "
-        "conversation_summary. Resumí en español lo que el cliente buscó y por qué "
-        "las opciones mostradas no le sirvieron."
+        "Sos un asistente de lista de espera inmobiliaria. El cliente rechazó las opciones "
+        "mostradas y describió en un mensaje todo lo que busca. "
+        "Respondé SOLO JSON válido con claves: zona, presupuesto, ambientes, preferencias, "
+        "notas, requirements_summary, conversation_summary. "
+        "requirements_summary: resumen claro para el equipo (2-4 oraciones). "
+        "conversation_summary: mismo criterio en prosa. "
+        "Extraé solo lo que el cliente indicó; no inventes datos."
     )
     user = (
-        f"Rama: {seek_type}\n"
-        f"Búsqueda inicial:\n{intake_text}\n\n"
-        f"Mensajes del cliente:\n{user_messages}\n\n"
-        f"Opciones mostradas:\n{listing_summary or '(sin detalle)'}"
+        f"Rama: {seek_type}\n\n"
+        f"### Respuesta del cliente (requisitos completos)\n{waitlist_raw_text}\n\n"
+        f"### Contexto opcional — búsqueda inicial\n{intake_text or '(sin dato)'}\n\n"
+        f"### Opciones que ya vio y rechazó\n{listing_summary or '(sin detalle)'}"
     )
     ctx = dict(log_context or {})
-    ctx["prompt_source"] = "waitlist_classifier"
+    ctx["prompt_source"] = "waitlist_summarize"
     try:
         raw = await chat_completion(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -132,9 +141,36 @@ async def classify_waitlist_requirements(
             return parsed
     except RuntimeError:
         pass
-    return requirements_from_profile_fallback(
-        intake_text=intake_text,
+    return requirements_from_text_fallback(
+        waitlist_raw_text=waitlist_raw_text,
         seek_type=seek_type,
+        intake_text=intake_text,
+        listing_summary=listing_summary,
+    )
+
+
+async def classify_waitlist_requirements(
+    *,
+    seek_type: str,
+    intake_text: str,
+    user_messages: str,
+    listing_summary: str = "",
+    waitlist_raw_text: str = "",
+    log_context: dict | None = None,
+) -> WaitlistRequirements:
+    """Compat: delega a summarize si hay waitlist_raw_text."""
+    if (waitlist_raw_text or "").strip():
+        return await summarize_waitlist_requirements(
+            seek_type=seek_type,
+            waitlist_raw_text=waitlist_raw_text,
+            intake_text=intake_text,
+            listing_summary=listing_summary,
+            log_context=log_context,
+        )
+    return requirements_from_text_fallback(
+        waitlist_raw_text=user_messages,
+        seek_type=seek_type,
+        intake_text=intake_text,
         listing_summary=listing_summary,
     )
 

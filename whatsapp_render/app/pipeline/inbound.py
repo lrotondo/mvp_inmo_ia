@@ -67,6 +67,6 @@ async def process_inbound_message(
         candidate_ids=result.candidate_ids,
         catalog_path_used=result.catalog_path,
         capture_data=result.capture_data,
-        has_waitlist_tag=result.phase == "waitlist",
+        has_waitlist_tag=result.phase == "waitlist_confirm",
         bot_paused=result.bot_paused,
     )

@@ -77,10 +77,45 @@ def build_intake_bundle_question(flow_path: str) -> str:
     return "Contame qué buscás y te ayudo."
 
 
+_WAITLIST_BUNDLE_ALQUILER = (
+    "Entiendo que ninguna de las opciones te cierra.\n\n"
+    "Para agregarte a nuestra *lista de espera*, contame en *un solo mensaje*:\n"
+    "• ¿Preferís *casa* o *departamento*?\n"
+    "• ¿*Zona o barrio* preferido? (O «sin preferencia de zona».)\n"
+    "• ¿Cuántos *dormitorios* necesitás?\n"
+    "• ¿*Presupuesto mensual* aproximado en ARS? (Si no, podés omitirlo.)\n"
+    "• *Mascotas*, garantía u otras preferencias importantes\n"
+    "• Si querés, por qué no te sirvieron las opciones que viste (opcional)"
+)
+
+_WAITLIST_BUNDLE_COMPRA = (
+    "Entiendo que ninguna de las opciones te cierra.\n\n"
+    "Para agregarte a nuestra *lista de espera*, contame en *un solo mensaje*:\n"
+    "• ¿Buscás *casa*, *departamento* o *lote*?\n"
+    "• ¿*Zona o barrio* preferido? (O «sin preferencia de zona».)\n"
+    "• ¿Cuántos *dormitorios* como mínimo?\n"
+    "• ¿*Presupuesto máximo en USD*? (Si no, podés omitirlo.)\n"
+    "• Preferencias (patio, cochera, metros, etc.)\n"
+    "• Si querés, por qué no te sirvieron las opciones que viste (opcional)"
+)
+
+
+def build_waitlist_bundle_question(flow_path: str) -> str:
+    path = (flow_path or "").strip().lower()
+    if path == "alquiler":
+        return _WAITLIST_BUNDLE_ALQUILER
+    if path == "compra":
+        return _WAITLIST_BUNDLE_COMPRA
+    return (
+        "Entiendo que ninguna opción te cierra. "
+        "Contame en un solo mensaje todo lo que buscás para agregarte a la lista de espera."
+    )
+
+
 WAITLIST_CONFIRMATION_TEXT = (
-    "Entiendo, ninguna de las opciones encaja con lo que necesitás.\n\n"
-    "Ya te registré en nuestra *lista de espera*. Un asesor del equipo se va a comunicar "
-    "con vos por WhatsApp cuando tengamos propiedades que se acerquen a tu búsqueda."
+    "¡Listo! Ya te registré en nuestra *lista de espera*.\n\n"
+    "Un *asesor del equipo* se va a comunicar con vos por WhatsApp "
+    "ni bien tengamos propiedades que cumplan con lo que necesitás."
 )
 
 

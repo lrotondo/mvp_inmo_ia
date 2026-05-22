@@ -42,6 +42,7 @@ from app.prompts.templates import (
     build_chat_system_prompt,
     build_intake_bundle_question,
     build_triage_message,
+    build_waitlist_bundle_question,
     format_visit_handoff,
 )
 from app.search_profile import (
@@ -55,7 +56,17 @@ from app.search_profile import (
     merge_search_profile_into_capture,
     reset_intake_state,
 )
-from app.waitlist import classify_waitlist_requirements, register_waitlist_entry
+from app.waitlist import register_waitlist_entry, summarize_waitlist_requirements
+from app.waitlist_flow import (
+    get_waitlist_answered,
+    get_waitlist_pending,
+    get_waitlist_prompt_sent,
+    get_waitlist_raw_text,
+    mark_waitlist_answered,
+    mark_waitlist_pending,
+    mark_waitlist_prompt_sent,
+    reset_waitlist_state,
+)
 from app.session_state import (
     capture_is_complete,
     merge_capture_from_conversation,
@@ -115,7 +126,10 @@ class Phase(str, Enum):
     DETAIL = "detail"
     GENERAL = "general"
     CAPTACION = "captacion"
-    WAITLIST = "waitlist"
+    WAITLIST_INTAKE = "waitlist_intake"
+    WAITLIST_CONFIRM = "waitlist_confirm"
+    # Alias compat tests/logs
+    WAITLIST = "waitlist_confirm"
 
 
 @dataclass
@@ -249,8 +263,15 @@ def decide_phase(
         catalog_csv_path=catalog_path,
         capture_data=capture_data,
     )
-    if shown and user_rejects_all_listings(user_text):
-        return Phase.WAITLIST
+    waitlist_active = get_waitlist_pending(capture_data) or (
+        shown
+        and user_rejects_all_listings(user_text)
+        and not get_waitlist_answered(capture_data)
+    )
+    if waitlist_active:
+        if get_waitlist_answered(capture_data):
+            return Phase.WAITLIST_CONFIRM
+        return Phase.WAITLIST_INTAKE
 
     if user_requests_fresh_listing(user_text) or not shown:
         return Phase.LISTING
@@ -493,7 +514,10 @@ async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     if plan.phase == Phase.INTAKE:
         return build_intake_bundle_question(ctx.flow_path)
 
-    if plan.phase == Phase.WAITLIST:
+    if plan.phase == Phase.WAITLIST_INTAKE:
+        return build_waitlist_bundle_question(ctx.flow_path)
+
+    if plan.phase == Phase.WAITLIST_CONFIRM:
         return WAITLIST_CONFIRMATION_TEXT
 
     if plan.phase == Phase.LISTING:
@@ -528,12 +552,33 @@ async def handle_turn(
     working_capture = dict(capture_data)
     if flow_just_switched and flow_path in ("compra", "alquiler"):
         working_capture = reset_intake_state(working_capture)
+        working_capture = reset_waitlist_state(working_capture)
+
+    if flow_path in ("compra", "alquiler"):
+        if (
+            listing_already_shown(
+                catalog_csv_path=None,
+                capture_data=working_capture,
+            )
+            and user_rejects_all_listings(user_text)
+            and not get_waitlist_pending(working_capture)
+        ):
+            working_capture = mark_waitlist_pending(working_capture)
+
+        if (
+            get_waitlist_pending(working_capture)
+            and get_waitlist_prompt_sent(working_capture)
+            and not get_waitlist_answered(working_capture)
+            and (user_text or "").strip()
+        ):
+            working_capture = mark_waitlist_answered(working_capture, user_text)
 
     if (
         flow_path in ("compra", "alquiler")
         and get_intake_prompt_sent(working_capture)
         and not get_intake_answered(working_capture)
         and not flow_just_switched
+        and not get_waitlist_pending(working_capture)
         and (user_text or "").strip()
     ):
         extracted = await extract_search_criteria(
@@ -566,6 +611,9 @@ async def handle_turn(
     if plan.phase == Phase.INTAKE:
         out_capture = mark_intake_prompt_sent(out_capture)
 
+    if plan.phase == Phase.WAITLIST_INTAKE:
+        out_capture = mark_waitlist_prompt_sent(out_capture)
+
     if plan.phase == Phase.LISTING and plan.candidate_ids:
         out_capture = merge_last_listing_into_capture(
             out_capture,
@@ -586,16 +634,16 @@ async def handle_turn(
     alerts: list[str] = []
     bot_paused = False
 
-    if plan.phase == Phase.WAITLIST and phone_number_id.strip() and wa_id.strip():
+    if plan.phase == Phase.WAITLIST_CONFIRM and phone_number_id.strip() and wa_id.strip():
         listing_summary = _listing_summary_for_waitlist(
             plan.catalog_path,
             out_capture,
             flow_path,
         )
-        requirements = await classify_waitlist_requirements(
+        requirements = await summarize_waitlist_requirements(
             seek_type=flow_path,
+            waitlist_raw_text=get_waitlist_raw_text(out_capture),
             intake_text=get_intake_raw_text(out_capture),
-            user_messages=user_messages_for_flow(user_text, flow_path, out_capture),
             listing_summary=listing_summary,
             log_context={"flow_path": flow_path, "wa_id": wa_id},
         )
