@@ -14,6 +14,14 @@ from app.detail_media import (
     user_wants_specific_property_detail,
 )
 from app.visit_intent import conversation_wants_visit, conversation_wants_visit_rent
+from app.listing_context import (
+    build_listing_catalog_block,
+    listing_already_shown,
+    load_last_listing_rows,
+    user_asks_about_shown_listing,
+    user_requests_fresh_listing,
+    user_showed_property_selection,
+)
 from app.property_matching import extract_property_ref
 from app.prompts.flow_master import build_turn_system_prompt
 from app.search_profile import (
@@ -73,6 +81,9 @@ def resolve_turn_kind(
     *,
     profile: SearchProfile | None,
     current_user_text: str,
+    history: list[HistoryTurn] | None = None,
+    capture_data: dict[str, Any] | None = None,
+    catalog_path_used: str | None = None,
 ) -> TurnKind:
     path = (flow_path or "nuevo").strip().lower()
     if path == "captacion":
@@ -84,9 +95,23 @@ def resolve_turn_kind(
             return TurnKind.GENERAL
         if path == "compra" and conversation_wants_visit(current_user_text):
             return TurnKind.GENERAL
+        already = listing_already_shown(
+            catalog_csv_path=catalog_path_used,
+            capture_data=capture_data,
+            history=history,
+        )
         if user_wants_specific_property_detail(current_user_text):
+            if (
+                already
+                and user_asks_about_shown_listing(current_user_text)
+                and not user_showed_property_selection(current_user_text)
+                and not user_requests_more_photos(current_user_text)
+            ):
+                return TurnKind.GENERAL
             return TurnKind.DETAIL
         if profile and profile.is_complete:
+            if already and not user_requests_fresh_listing(current_user_text):
+                return TurnKind.GENERAL
             return TurnKind.LISTING
         return TurnKind.INTAKE
     return TurnKind.GENERAL
@@ -131,6 +156,9 @@ def plan_turn(
         flow_path,
         profile=profile,
         current_user_text=user_text,
+        history=history,
+        capture_data=ctx.capture_data,
+        catalog_path_used=catalog_path_used,
     )
 
     property_ref = extract_property_ref(
@@ -247,7 +275,29 @@ async def generate_turn_reply(
         return await build_detail_outbound(user_text, listing_rows=rows)
 
     catalog_block = ""
-    if plan.kind not in (TurnKind.LISTING, TurnKind.INTAKE):
+    listing_followup = False
+    if plan.kind == TurnKind.GENERAL and plan.catalog_path_used:
+        listing_rows = load_last_listing_rows(
+            plan.catalog_path_used,
+            ctx.capture_data,
+        )
+        if not listing_rows:
+            from app.listing_context import history_contains_listado
+
+            if history_contains_listado(history):
+                from app.detail_media import _rows_from_recent_listado
+
+                listing_rows = _rows_from_recent_listado(
+                    history, plan.catalog_path_used
+                )
+        if listing_rows:
+            branch = plan.profile.branch if plan.profile else ctx.flow_path
+            catalog_block = build_listing_catalog_block(
+                listing_rows, branch=branch
+            )
+            listing_followup = True
+
+    if plan.kind not in (TurnKind.LISTING, TurnKind.INTAKE) and not catalog_block:
         if ctx.flow_path == "captacion":
             catalog_block = "(No aplica catálogo.)"
         elif ctx.flow_path == "nuevo":
@@ -259,6 +309,7 @@ async def generate_turn_reply(
         turn_kind=plan.kind.value,
         catalog_block=catalog_block,
         system_prompt_override=ctx.system_prompt_override,
+        listing_followup=listing_followup,
     )
     messages = build_model_messages(system_prompt, history, user_text)
     return await chat_completion(messages, max_tokens=512)

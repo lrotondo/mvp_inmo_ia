@@ -225,6 +225,14 @@ _TURN_SLIM: dict[str, str] = {
     ),
 }
 
+_LISTING_FOLLOWUP_SLIM = (
+    "### CONSULTA SOBRE OPCIONES YA MOSTRADAS\n"
+    "El cliente ya recibió el listado (Opción 1, 2, 3). Respondé solo su pregunta "
+    "usando los datos del bloque de opciones. Citá «Opción N» cuando corresponda.\n"
+    "TERMINANTEMENTE PROHIBIDO: volver a enviar el listado, `[LISTADO:ids]`, "
+    "viñetas con precios inventados o repetir las 3 fichas completas."
+)
+
 _TURN_ALERTS: dict[str, str] = {
     "compra": ALERTA_COMPRA,
     "alquiler": ALERTA_ALQUILER,
@@ -239,6 +247,7 @@ def build_turn_system_prompt(
     turn_kind: str,
     catalog_block: str = "",
     system_prompt_override: str | None = None,
+    listing_followup: bool = False,
 ) -> str:
     """Prompt corto por tipo de turno (sin catálogo completo en listado/intake)."""
     name = (tenant_name or "").strip() or "la inmobiliaria"
@@ -256,6 +265,8 @@ def build_turn_system_prompt(
         )
 
     parts = [base, _TURN_SLIM.get(kind, _TURN_SLIM["general"])]
+    if listing_followup and kind == "general":
+        parts.append(_LISTING_FOLLOWUP_SLIM)
 
     if path in _TURN_ALERTS and kind not in ("listing", "intake", "triage"):
         parts.append(_TURN_ALERTS[path])
@@ -282,6 +293,12 @@ def build_turn_system_prompt(
     elif catalog_block.strip() and kind == "detail":
         label = "VENTA" if path == "compra" else "ALQUILER"
         parts.append(f"\n### FICHA / CONTEXTO ({label})\n{catalog_block}")
+    elif catalog_block.strip() and kind == "general" and listing_followup:
+        label = "VENTA" if path == "compra" else "ALQUILER"
+        parts.append(
+            f"\n### OPCIONES MOSTRADAS ({label}) — solo para responder preguntas\n"
+            f"{catalog_block}"
+        )
     elif path == "nuevo":
         parts.append("\n(Catálogo oculto hasta definir compra o alquiler.)")
 

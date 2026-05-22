@@ -4,6 +4,8 @@ import re
 from typing import Any
 
 from app.catalog import get_properties_by_ids
+from app.catalog_profiles import format_row_compact
+from app.conversation import HistoryTurn
 from app.property_matching import _normalize_property_match_text
 
 _LAST_LISTING_KEY = "last_listing"
@@ -30,6 +32,27 @@ _ORDINAL_TO_INDEX: dict[str, int] = {
 }
 _TYPE_HINT_RE = re.compile(
     r"\b(duplex|d[uú]plex|departamento|depto|casa|ph)\b",
+    re.I,
+)
+_LISTADO_TAG_RE = re.compile(r"\[LISTADO:", re.I)
+_FRESH_LISTING_RE = re.compile(
+    r"\b("
+    r"otras?\s+opci[oó]nes|m[aá]s\s+opci[oó]nes|"
+    r"mostr[aá](?:me)?\s+(?:de\s+nuevo|otra\s+vez|otras?)|"
+    r"ver\s+(?:las\s+)?opci[oó]nes|mostr[aá]me\s+(?:las\s+)?opci[oó]nes|"
+    r"dec[ií]me\s+qu[eé]\s+ten[eé]s|qu[eé]\s+ten[eé]s|qu[eé]\s+hay|"
+    r"qu[eé]\s+disponible|alguna\s+opci[oó]n"
+    r")\b",
+    re.I,
+)
+_LISTING_FOLLOWUP_RE = re.compile(
+    r"\b("
+    r"tiene|tienen|hay\s+|cu[aá]nto|cu[aá]ntos|cu[aá]l|"
+    r"metros?|m2|pileta|cochera|garage|mascotas?|expensas?|"
+    r"garant[ií]a|caracter[ií]sticas?|diferencia|comparar|"
+    r"acepta|admite|incluye|planta|balc[oó]n|toilette|"
+    r"precio|sale|alquiler|usd|pesos|ambientes?|dormitorios?"
+    r")\b",
     re.I,
 )
 
@@ -170,3 +193,76 @@ def property_ref_from_listing_option_number(
     if index is None or index < 1 or index > len(listing_rows):
         return ""
     return str(listing_rows[index - 1].get("ID", "")).strip()
+
+
+def history_contains_listado(history: list[HistoryTurn] | None) -> bool:
+    for turn in history or []:
+        if turn.role == "assistant" and _LISTADO_TAG_RE.search(turn.content or ""):
+            return True
+    return False
+
+
+def listing_already_shown(
+    *,
+    catalog_csv_path: str | None,
+    capture_data: dict[str, Any] | None,
+    history: list[HistoryTurn] | None,
+) -> bool:
+    raw = (capture_data or {}).get(_LAST_LISTING_KEY)
+    if isinstance(raw, dict) and raw.get("ids"):
+        return True
+    if load_last_listing_rows(catalog_csv_path, capture_data):
+        return True
+    return history_contains_listado(history)
+
+
+_SELECTION_RE = re.compile(
+    r"\b("
+    r"me\s+(?:interesa|gusta|cierra|convence|quedo)|"
+    r"quiero\s+(?:esa|este|esta|la|el|av\.?|calle)|"
+    r"excelente\s+elecci[oó]n|buena\s+elecci[oó]n|"
+    r"esa\s+(?:me\s+)?(?:gusta|interesa)"
+    r")\b",
+    re.I,
+)
+
+
+def user_showed_property_selection(user_text: str) -> bool:
+    """Eligió o se decidió por una opción (no solo pregunta sobre ella)."""
+    return bool(_SELECTION_RE.search((user_text or "").strip()))
+
+
+def user_requests_fresh_listing(user_text: str) -> bool:
+    from app.lead_context import current_message_is_browse_only
+
+    text = (user_text or "").strip()
+    if not text:
+        return False
+    if current_message_is_browse_only(text):
+        return True
+    return bool(_FRESH_LISTING_RE.search(text))
+
+
+def user_asks_about_shown_listing(user_text: str) -> bool:
+    """Pregunta sobre opciones ya mostradas (características, comparación, opción N)."""
+    text = (user_text or "").strip()
+    if not text or user_requests_fresh_listing(text):
+        return False
+    if _listing_index_from_text(text) is not None:
+        return True
+    return bool(_LISTING_FOLLOWUP_RE.search(text))
+
+
+def build_listing_catalog_block(
+    listing_rows: list[dict[str, Any]],
+    *,
+    branch: str,
+) -> str:
+    if not listing_rows:
+        return ""
+    lines: list[str] = []
+    for index, row in enumerate(listing_rows, start=1):
+        compact = format_row_compact(row, branch)
+        if compact:
+            lines.append(f"Opción {index}: {compact}")
+    return "\n\n".join(lines)

@@ -218,6 +218,25 @@ def strip_listado_tags(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
+def suppress_repeat_listado_outbound(
+    message: str,
+    *,
+    listing_already_shown: bool,
+) -> str:
+    """Evita reenviar [LISTADO:ids] cuando el cliente ya vio las opciones."""
+    if not listing_already_shown:
+        return message
+    parsed = parse_listado_tag(message or "")
+    if parsed is not None:
+        parts = [p for p in (parsed.intro, parsed.closing) if p.strip()]
+        cleaned = _strip_catalog_essay_lines("\n\n".join(parts).strip())
+        logger.info("listado_repetido_suprimido (consulta sobre opciones)")
+        return cleaned or strip_listado_tags(message)
+    if _LISTADO_TAG_RE.search(message or ""):
+        return strip_listado_tags(message)
+    return message
+
+
 def parse_listado_tag(text: str) -> ParsedListado | None:
     """Extrae intro, IDs y cierre alrededor de [LISTADO:id1,id2,...]."""
     body = (text or "").strip()

@@ -21,7 +21,9 @@ from app.property_matching import extract_property_ref
 from app.listing_delivery import (
     ensure_listado_from_candidates,
     suppress_premature_catalog_outbound,
+    suppress_repeat_listado_outbound,
 )
+from app.listing_context import listing_already_shown
 from app.session_state import SessionState
 from app.turn_handler import (
     TurnContext,
@@ -125,6 +127,15 @@ async def process_inbound_message(
             current_user_text=user_text,
             flow_path=flow_path,
         )
+        if plan.kind == TurnKind.GENERAL:
+            clean_answer = suppress_repeat_listado_outbound(
+                clean_answer,
+                listing_already_shown=listing_already_shown(
+                    catalog_csv_path=plan.catalog_path_used,
+                    capture_data=session.capture_data,
+                    history=history,
+                ),
+            )
 
     capture_data: dict[str, Any] = dict(session.capture_data)
     if plan.profile and flow_path in ("compra", "alquiler"):
