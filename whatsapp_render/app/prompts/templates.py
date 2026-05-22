@@ -23,16 +23,27 @@ _FLOW_LABELS: dict[str, str] = {
     "captacion": "captación de propiedad para vender",
 }
 
-_DEFAULT_MINIMAL_SYSTEM_PROMPT = """Sos el asistente de WhatsApp de {tenant_name} (inmobiliaria).
+_LISTING_FOLLOWUP_RULES = """Cuando exista el bloque "OPCIONES MOSTRADAS":
+- El cliente pregunta sobre el listado que ya recibió (fotos por WhatsApp).
+- Respondé con datos concretos citando "Opción 1", "Opción 2" o "Opción 3" según corresponda.
+- Si preguntan por un atributo (patio, pileta, precio, metros, etc.), decilo por cada opción relevante según el bloque; no omitas el dato si está ahí.
+- Si dicen "esa casa", "la primera", "la de Hudson", etc., usá los mensajes recientes del cliente y el bloque para inferir la opción; si queda ambiguo, respondé qué opción(es) cumplen y pedí solo el número de opción.
+- No respondas solo con "¿te interesa alguna?" sin aportar información del bloque cuando la respuesta está en los datos."""
+
+_DEFAULT_MINIMAL_SYSTEM_PROMPT = (
+    """Sos el asistente de WhatsApp de {tenant_name} (inmobiliaria).
 Rama actual: {flow_label}.
 
 Reglas:
 - Respuestas breves (2-4 líneas), tono amable y profesional.
 - No inventes propiedades, precios, direcciones ni barrios.
 - Prohibido usar [LISTADO:ids] o listar opciones en viñetas; el sistema envía fotos por separado.
-- Si hay un bloque "OPCIONES MOSTRADAS", respondé solo con esos datos (Opción 1, 2, 3).
 - No propongas fechas ni horarios exactos de visita; un asesor coordina después.
-- En captación, pedí tipo de inmueble, ubicación y ambientes/metros si faltan."""
+- En captación, pedí tipo de inmueble, ubicación y ambientes/metros si faltan.
+
+"""
+    + _LISTING_FOLLOWUP_RULES
+)
 
 
 def format_visit_handoff(property_ref: str) -> str:
@@ -51,6 +62,12 @@ def build_triage_message(tenant_name: str) -> str:
 
 def _minimal_prompt_template() -> str:
     return os.environ.get("MINIMAL_SYSTEM_PROMPT", "").strip() or _DEFAULT_MINIMAL_SYSTEM_PROMPT
+
+
+def _uses_custom_system_prompt(system_prompt_override: str | None) -> bool:
+    if (system_prompt_override or "").strip():
+        return True
+    return bool(os.environ.get("MINIMAL_SYSTEM_PROMPT", "").strip())
 
 
 def build_chat_system_prompt(
@@ -76,9 +93,12 @@ def build_chat_system_prompt(
     parts = [base]
     block = (catalog_block or "").strip()
     if block:
+        if _uses_custom_system_prompt(system_prompt_override):
+            parts.append(_LISTING_FOLLOWUP_RULES)
         parts.append(
-            "\n### OPCIONES MOSTRADAS (solo para responder preguntas)\n"
-            "No reenvíes el listado. Usá solo estos datos:\n"
+            "\n### OPCIONES MOSTRADAS (listado ya enviado al cliente)\n"
+            "No reenvíes el listado ni repitas todas las fichas. "
+            "Respondé la consulta usando solo estas opciones (citá Opción N):\n"
             f"{block}"
         )
     return "\n\n".join(parts)

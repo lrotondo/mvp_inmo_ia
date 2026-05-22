@@ -5,6 +5,7 @@ from typing import Any
 
 _USER_FLOW_MESSAGES_KEY = "user_flow_messages"
 _MAX_USER_MESSAGES_PER_FLOW = 40
+_LLM_PRIOR_USER_MESSAGES = 3
 
 _BOT_ASKED_VISIT_TIME_KEY = "bot_asked_visit_time"
 
@@ -15,6 +16,30 @@ _BOT_ASKED_TIME_PREFERENCE_RE = re.compile(
     r")\b",
     re.I,
 )
+
+def prior_user_messages_for_flow(
+    current_user_text: str,
+    flow_path: str,
+    capture_data: dict[str, Any] | None = None,
+    *,
+    max_prior: int = _LLM_PRIOR_USER_MESSAGES,
+) -> list[str]:
+    """Últimos mensajes del cliente en la rama (sin el mensaje actual)."""
+    path = (flow_path or "").strip().lower()
+    raw = (capture_data or {}).get(_USER_FLOW_MESSAGES_KEY)
+    if not isinstance(raw, dict):
+        return []
+    stored = raw.get(path)
+    if not isinstance(stored, list):
+        return []
+    messages = [str(m).strip() for m in stored if str(m).strip()]
+    current = (current_user_text or "").strip()
+    if messages and current and messages[-1] == current:
+        messages = messages[:-1]
+    if max_prior <= 0:
+        return []
+    return messages[-max_prior:]
+
 
 def user_messages_for_flow(
     current_user_text: str,

@@ -17,7 +17,7 @@ from typing import Any
 
 from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
 from app.catalog_search import select_listing_candidates
-from app.capture_flow import append_user_flow_message
+from app.capture_flow import append_user_flow_message, prior_user_messages_for_flow
 from app.conversation import build_model_messages
 from app.llm.deepseek import chat_completion
 from app.listing_context import (
@@ -382,7 +382,22 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
         catalog_block=catalog_block,
         system_prompt_override=ctx.system_prompt_override,
     )
-    messages = build_model_messages(system, user_text)
+    listing_followup = bool((catalog_block or "").strip())
+    prior_messages = (
+        prior_user_messages_for_flow(
+            user_text,
+            ctx.flow_path,
+            ctx.capture_data,
+        )
+        if listing_followup
+        else []
+    )
+    messages = build_model_messages(
+        system,
+        user_text,
+        prior_user_messages=prior_messages,
+        listing_followup=listing_followup,
+    )
 
     log_context: dict[str, Any] = {
         "phase": plan.phase.value,
@@ -390,6 +405,8 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
         "tenant_name": ctx.tenant_name,
         "prompt_source": _prompt_source_label(ctx.system_prompt_override),
         "user_message": (user_text or "").strip(),
+        "prior_user_messages": prior_messages,
+        "listing_followup": listing_followup,
         "max_tokens": _CHAT_MAX_TOKENS,
     }
     log_context.update(

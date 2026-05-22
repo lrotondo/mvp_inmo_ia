@@ -22,6 +22,7 @@ def test_build_chat_system_prompt_includes_catalog() -> None:
     assert "OPCIONES MOSTRADAS" in prompt
     assert "Opción 1" in prompt
     assert "Prohibido usar [LISTADO:ids]" in prompt
+    assert "patio" in prompt.lower()
 
 
 def test_format_visit_handoff() -> None:
