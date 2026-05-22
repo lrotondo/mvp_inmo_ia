@@ -274,138 +274,27 @@ def user_search_profile_ready(
     current_user_text: str,
     flow_path: str,
 ) -> bool:
-    """
-    True si el cliente indicó tipo (casa/departamento), zona (o sin preferencia),
-    dormitorios/ambientes y, en compra, presupuesto USD.
-    Puerta para listados y material visual: evita mostrar stock antes de indagar.
-    """
+    """True si el perfil de búsqueda está completo (ver app.search_profile)."""
+    from app.search_profile import build_search_profile
+
     path = (flow_path or "").strip().lower()
     if path not in ("compra", "alquiler"):
         return True
-
-    blob = user_messages_for_flow(history, current_user_text, flow_path)
-    if not blob.strip():
-        return False
-
-    has_type = user_has_property_type(blob)
-    has_zone = user_declined_zone_preference(blob) or bool(
-        _ZONE_SIGNAL_RE.search(blob)
-    )
-    has_beds = bool(_BEDROOM_SIGNAL_RE.search(blob))
-    if path == "compra":
-        return has_type and has_zone and has_beds and user_has_budget_usd(blob)
-    return has_type and has_zone and has_beds
+    return build_search_profile(history, current_user_text, flow_path).is_complete
 
 
-_STREET_AL_RE = re.compile(r"\s+al\s+", re.I)
-
-
-def _normalize_property_match_text(text: str) -> str:
-    """Unifica 'Arana al 200' con 'Arana 200' para matching en catálogo."""
-    t = (text or "").lower().strip()
-    t = _STREET_AL_RE.sub(" ", t)
-    t = re.sub(r"\s+", " ", t)
-    return t
-
-
-def _property_ref_from_blob_norm(
-    blob_norm: str,
-    *,
-    flow_path: str,
-    catalog_sale_path: str | None,
-    catalog_rent_path: str | None,
-    skip_barrio: bool,
-) -> str:
-    from app.catalog import iter_rows_for_property_matching
-
-    best = ""
-    best_len = 0
-    for csv_path in catalog_paths_for_flow(flow_path, catalog_sale_path, catalog_rent_path):
-        for row in iter_rows_for_property_matching(csv_path):
-            candidates: list[str] = []
-            row_id = str(row.get("ID", "")).strip()
-            titulo = str(row.get("Titulo", "")).strip()
-            tipo = str(row.get("Tipo", "")).strip()
-            direccion = str(row.get("Direccion", "")).strip()
-            barrio = str(row.get("Barrio", "")).strip()
-            if row_id:
-                candidates.append(row_id)
-                candidates.append(f"ID {row_id}")
-            if titulo:
-                candidates.append(titulo)
-            if tipo and len(tipo) >= 5:
-                candidates.append(tipo)
-            if direccion:
-                candidates.append(direccion)
-            if barrio and len(barrio) >= 5 and not skip_barrio:
-                candidates.append(barrio)
-
-            for cand in candidates:
-                key = _normalize_property_match_text(cand)
-                if len(key) < 4:
-                    continue
-                from app.catalog import field_matches_reference
-
-                if key not in blob_norm and not field_matches_reference(
-                    blob_norm, cand
-                ):
-                    continue
-                if len(key) > best_len:
-                    best = cand
-                    best_len = len(key)
-    return best
-
-
-def extract_property_ref(
-    conversation_text: str,
-    *,
-    flow_path: str,
-    catalog_sale_path: str | None,
-    catalog_rent_path: str | None,
-    history: list[HistoryTurn] | None = None,
-    current_user_text: str = "",
-    user_only: bool = False,
-) -> str:
-    current = (current_user_text or "").strip()
-    if current:
-        blob_norm = _normalize_property_match_text(current.lower())
-        skip_barrio = user_declined_zone_preference(blob_norm)
-        ref = _property_ref_from_blob_norm(
-            blob_norm,
-            flow_path=flow_path,
-            catalog_sale_path=catalog_sale_path,
-            catalog_rent_path=catalog_rent_path,
-            skip_barrio=skip_barrio,
-        )
-        if ref:
-            return ref
-
-    if user_only and history is not None:
-        blob = user_messages_for_flow(history, current_user_text, flow_path).lower()
-    else:
-        blob = conversation_text.lower()
-
-    blob_norm = _normalize_property_match_text(blob)
-    skip_barrio = user_declined_zone_preference(blob)
-    return _property_ref_from_blob_norm(
-        blob_norm,
-        flow_path=flow_path,
-        catalog_sale_path=catalog_sale_path,
-        catalog_rent_path=catalog_rent_path,
-        skip_barrio=skip_barrio,
-    )
-
-
-def conversation_wants_visit(conversation_text: str) -> bool:
-    return bool(_VISIT_RE.search(conversation_text))
-
-
-def conversation_wants_visit_rent(conversation_text: str) -> bool:
-    return bool(_RENT_VISIT_RE.search(conversation_text))
-
-
-def conversation_requests_human(conversation_text: str) -> bool:
-    return bool(_HUMAN_CONTACT_RE.search(conversation_text))
+from app.property_matching import _normalize_property_match_text, extract_property_ref
+from app.visit_intent import (
+    bot_asked_visit_time_preference,
+    build_rent_visit_lead_notes,
+    conversation_requests_human,
+    conversation_wants_visit,
+    conversation_wants_visit_rent,
+    extract_visit_time_preference_label,
+    rent_visit_ready_for_alert,
+    scoped_rent_visit_intent,
+    user_gave_visit_time_preference,
+)
 
 
 def user_signals_real_interest(
@@ -430,111 +319,6 @@ def user_signals_real_interest_rent(
     """Alquiler: visita/asesor en mensaje actual (evita re-disparar por historial)."""
     _ = history
     return user_signals_real_interest_rent_current_message(current_user_text)
-
-
-def user_gave_visit_time_preference(text: str) -> bool:
-    return bool(_TIME_PREFERENCE_RE.search(text.strip()))
-
-
-def extract_visit_time_preference_label(text: str) -> str:
-    """Etiqueta legible para lead/notificación (mañana, tarde, fin de semana)."""
-    body = text.strip().lower()
-    if not body:
-        return ""
-    if re.search(r"\bfin\s+de\s+semana\b|\bs[aá]bado\b|\bdomingo\b", body):
-        return "fin de semana"
-    if re.search(r"\bma[nñ]ana\b|antes\s+del\s+mediod", body):
-        return "mañana"
-    if re.search(r"\btarde\b|despu[eé]s\s+del\s+mediod|\bnoche\b", body):
-        return "tarde"
-    if re.search(r"\bpreferentemente\b|\bprefiero\b", body):
-        if re.search(r"\btarde\b", body):
-            return "tarde"
-        if re.search(r"\bma[nñ]ana\b", body):
-            return "mañana"
-    return ""
-
-
-def bot_asked_visit_time_preference(history: list[HistoryTurn]) -> bool:
-    """Último mensaje del bot en historial (antes de la respuesta actual del cliente)."""
-    for turn in reversed(history):
-        if turn.role != "assistant":
-            continue
-        return bool(_BOT_ASKED_TIME_PREFERENCE_RE.search(turn.content))
-    return False
-
-
-def scoped_rent_visit_intent(
-    history: list[HistoryTurn],
-    current_user_text: str,
-    flow_path: str,
-) -> bool:
-    scoped = user_messages_for_flow(history, current_user_text, flow_path)
-    return bool(scoped.strip()) and conversation_wants_visit_rent(scoped)
-
-
-def rent_visit_ready_for_alert(
-    history: list[HistoryTurn],
-    current_user_text: str,
-    flow_path: str,
-) -> bool:
-    """
-    Alquiler: alerta/lead de visita cuando hay intención de ver + preferencia horaria.
-    - Mismo mensaje: visita + franja horaria.
-    - Tras consulta del bot: visita en la rama + respuesta con preferencia (ej. tarde).
-    - Pedido explícito de asesor humano: sin esperar preferencia.
-    """
-    current = current_user_text.strip()
-    if not current:
-        return False
-
-    scoped = user_messages_for_flow(history, current_user_text, flow_path)
-    if conversation_requests_human(current) or conversation_requests_human(scoped):
-        return True
-
-    has_visit = scoped_rent_visit_intent(history, current_user_text, flow_path)
-    pref_current = user_gave_visit_time_preference(current)
-    pref_label = extract_visit_time_preference_label(current)
-
-    if has_visit and conversation_wants_visit_rent(current) and pref_current:
-        return True
-
-    if pref_label and bot_asked_visit_time_preference(history) and has_visit:
-        return True
-
-    return False
-
-
-def build_rent_visit_lead_notes(
-    history: list[HistoryTurn],
-    current_user_text: str,
-    flow_path: str,
-) -> str:
-    """Fragmento para interest_summary / conversation_summary en leads de visita."""
-    parts: list[str] = []
-    scoped = user_messages_for_flow(history, current_user_text, flow_path)
-
-    pref = extract_visit_time_preference_label(current_user_text)
-    if not pref:
-        for line in reversed(scoped.split("\n")):
-            pref = extract_visit_time_preference_label(line)
-            if pref:
-                break
-
-    if scoped_rent_visit_intent(history, current_user_text, flow_path):
-        if re.search(
-            r"\b(dos|ambas|ambos|las\s+dos|los\s+dos)\b",
-            scoped,
-            re.I,
-        ):
-            parts.append("Interés en visitar dos opciones del catálogo.")
-        else:
-            parts.append("Pide coordinar visita a propiedad(es) del catálogo.")
-
-    if pref:
-        parts.append(f"Preferencia horaria: {pref}.")
-
-    return " ".join(parts)
 
 
 def user_signals_real_interest_rent_current_message(current_user_text: str) -> bool:

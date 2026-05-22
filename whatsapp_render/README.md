@@ -1,4 +1,4 @@
-# WhatsApp MVP en Render (FastAPI + Meta Cloud API + Groq + multicliente)
+# WhatsApp MVP en Render (FastAPI + Meta Cloud API + DeepSeek/Groq + multicliente)
 
 Servicio para responder WhatsApp con un solo backend:
 
@@ -19,8 +19,12 @@ Servicio para responder WhatsApp con un solo backend:
 | Variable | Obligatoria | Descripcion |
 |----------|-------------|-------------|
 | `DATABASE_URL` | recomendada (multicliente) | **MySQL** (`mysql+pymysql://...?charset=utf8mb4`). Ver [`docs/MYSQL_SETUP.md`](docs/MYSQL_SETUP.md) |
-| `GROQ_API_KEY` | si | API key de Groq |
-| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` (respuestas al cliente) |
+| `DEEPSEEK_API_KEY` | si (chat) | API key DeepSeek — respuestas al cliente (`deepseek-chat`) |
+| `DEEPSEEK_MODEL` | no | Default: `deepseek-chat` |
+| `LLM_CHAT_PROVIDER` | no | Default: `deepseek` |
+| `LLM_CLASSIFIER_PROVIDER` | no | Default: `groq` (leads / waitlist) |
+| `GROQ_API_KEY` | si (leads) | API key de Groq |
+| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` (opcional si usás Groq para chat) |
 | `GROQ_LEAD_MODEL` | no | Default: `llama-3.1-8b-instant` (clasificador de leads) |
 | `APP_ENV` | no | `development` / `dev` / `local` desactiva leads |
 | `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |

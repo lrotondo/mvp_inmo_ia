@@ -77,6 +77,37 @@ def get_conversation_history(
     return [HistoryTurn(role=role, content=content) for role, content in items[-cap:]]
 
 
+_GENERIC_ASSISTANT_FALLBACK = (
+    "Te comparto la información en el mensaje anterior. ¿En qué más te puedo ayudar?"
+)
+
+
+def sanitize_assistant_for_history(text: str) -> str:
+    """Evita persistir listados inventados sin tag [LISTADO:]."""
+    from app.listing_delivery import (
+        _line_looks_invented_property,
+        strip_invented_listings,
+    )
+
+    body = strip_invented_listings((text or "").strip())
+    if not body:
+        return _GENERIC_ASSISTANT_FALLBACK
+
+    import re
+
+    has_listado = bool(re.search(r"\[LISTADO:[^\]]+\]", body, re.I))
+    invented_lines = sum(
+        1 for line in body.splitlines() if _line_looks_invented_property(line.strip())
+    )
+    if invented_lines and not has_listado:
+        logger.warning(
+            "historial_assistant_sanitizado invented_lines=%s",
+            invented_lines,
+        )
+        return _GENERIC_ASSISTANT_FALLBACK
+    return body
+
+
 def append_conversation_turn(
     phone_number_id: str,
     wa_id: str,
@@ -86,7 +117,7 @@ def append_conversation_turn(
     pnid = phone_number_id.strip()
     wid = wa_id.strip()
     user_body = user_text.strip()
-    assistant_body = assistant_text.strip()
+    assistant_body = sanitize_assistant_for_history(assistant_text)
     if not pnid or not wid or not user_body or not assistant_body:
         return
 

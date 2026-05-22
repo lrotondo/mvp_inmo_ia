@@ -219,7 +219,7 @@ def property_video_url(row: dict[str, Any]) -> str:
 
 
 def _normalize_match_text(text: str) -> str:
-    from app.lead_context import _normalize_property_match_text
+    from app.property_matching import _normalize_property_match_text
 
     return _normalize_property_match_text((text or "").lower())
 

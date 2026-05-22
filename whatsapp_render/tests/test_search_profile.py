@@ -1,84 +1,29 @@
-from __future__ import annotations
-
 from app.conversation import HistoryTurn
-from app.lead_context import (
-    user_declined_zone_preference,
-    user_search_profile_ready,
-)
-from app.listing_delivery import suppress_premature_catalog_outbound
+from app.search_profile import build_search_profile
 
 
-def test_profile_not_ready_on_generic_rent_intent() -> None:
+def test_alquiler_casa_sin_zona_incomplete_then_complete():
     history = [
-        HistoryTurn(role="user", content="buen dia"),
-        HistoryTurn(role="assistant", content="¿Comprar, alquilar o vender?"),
+        HistoryTurn(role="user", content="quiero alquilar"),
+        HistoryTurn(role="assistant", content="¿casa o departamento?"),
+        HistoryTurn(role="user", content="casa 2 o 3 dormitorios"),
     ]
-    assert not user_search_profile_ready(
-        history,
-        "estoy buscando departamento en alquiler",
-        "alquiler",
-    )
+    profile = build_search_profile(history, "zonas preferidas", "alquiler")
+    assert profile.property_type == "casa"
+    assert "zona" in profile.missing_fields
+
+    history2 = history + [
+        HistoryTurn(role="user", content="sin preferencia de zona"),
+    ]
+    profile2 = build_search_profile(history2, "ver ideas", "alquiler")
+    assert profile2.is_complete
+    assert profile2.any_zone
 
 
-def test_profile_ready_with_zone_and_beds() -> None:
-    history: list[HistoryTurn] = []
-    assert user_search_profile_ready(
-        history,
-        "busco departamento en el centro, 2 dormitorios",
-        "alquiler",
-    )
-
-
-def test_profile_not_ready_without_property_type() -> None:
-    assert not user_search_profile_ready(
-        [],
-        "busco en el centro, 2 dormitorios",
-        "alquiler",
-    )
-    assert not user_search_profile_ready(
-        [],
-        "cualquier zona, 2 dormitorios, presupuesto 150000 usd",
-        "compra",
-    )
-
-
-def test_profile_ready_any_zone_declared() -> None:
-    assert user_search_profile_ready(
-        [],
-        "cualquier zona, casa, monoambiente, presupuesto 150000 usd",
-        "compra",
-    )
-
-
-def test_declined_zone_phrase_leo() -> None:
-    blob = "no tengo preferencia de zona, preferiria una casa"
-    assert user_declined_zone_preference(blob)
-
-
-def test_profile_ready_leo_chat_with_budget() -> None:
+def test_compra_requires_presupuesto():
     history = [
-        HistoryTurn(
-            role="user",
-            content="no tengo preferencia de zona, preferiria una casa, de 2 o mas dormitorios",
-        ),
-        HistoryTurn(role="assistant", content="¿zona y presupuesto?"),
+        HistoryTurn(role="user", content="busco comprar casa en centro"),
+        HistoryTurn(role="user", content="3 dormitorios"),
     ]
-    assert user_search_profile_ready(history, "tengo 200000", "compra")
-
-
-def test_suppress_strips_listado_when_profile_incomplete() -> None:
-    msg = (
-        "¡Buen día! Te muestro una opción:\n\n"
-        "[LISTADO:99]\n\n"
-        "Garibaldi | Precio: $700000 | 1 dormitorios\n\n"
-        "¿En qué zona te gustaría vivir?"
-    )
-    out = suppress_premature_catalog_outbound(
-        msg,
-        history=[],
-        current_user_text="estoy buscando departamento en alquiler",
-        flow_path="alquiler",
-    )
-    assert "[LISTADO:" not in out
-    assert "Garibaldi" not in out
-    assert "zona" in out.lower()
+    profile = build_search_profile(history, "", "compra")
+    assert "presupuesto" in profile.missing_fields

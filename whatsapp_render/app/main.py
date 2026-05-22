@@ -11,45 +11,24 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
-from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
-from app.catalog_search import (
-    build_mandatory_candidates_block,
-    select_listing_candidates,
-)
-from app.lead_context import user_messages_for_flow, user_search_profile_ready
 from app.conversation import (
     append_conversation_turn,
-    build_model_messages,
     get_conversation_history,
 )
 from app.db import dispose_engine, get_engine, init_db
-from app.deepseek_client import chat_completion
 from app.flow_triggers import (
-    apply_captacion_closing,
-    apply_visit_handoff,
-    parse_flow_alerts,
     process_flow_alerts,
     register_visit_lead_on_handoff_message,
     process_waitlist_registration,
-    resolve_flow_alerts,
 )
 from app.waitlist import fetch_waitlist_rows, waitlist_rows_to_csv
-from app.lead_context import extract_property_ref
 from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
 )
 from app.leads import try_register_lead
-from app.detail_media import (
-    enrich_detail_media_from_catalog,
-    user_wants_specific_property_detail,
-)
-from app.listing_delivery import (
-    ensure_listado_from_candidates,
-    suppress_premature_catalog_outbound,
-)
 from app.listing_delivery import deliver_bot_response
-from app.prompts.flow_master import build_flow_system_prompt
+from app.pipeline.inbound import process_inbound_message
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
 from app.tenant_service import (
     TenantContext,
@@ -540,149 +519,39 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             flow_path=flow_path,
         )
 
-        row_count, catalog_block, catalog_path_used = get_catalog_for_flow(
-            flow_path,
-            ctx.catalog_csv_path,
-            ctx.catalog_rent_csv_path,
-        )
-        logger.info(
-            "Catalogo flow=%s path=%r rows=%s",
-            flow_path,
-            catalog_path_used,
-            row_count,
-        )
-        profile_ready = user_search_profile_ready(
-            history, user_text, flow_path
-        )
-        candidate_ids: list[str] = []
-        candidate_rows: list[dict[str, Any]] = []
-        if (
-            flow_path in ("compra", "alquiler")
-            and profile_ready
-            and catalog_path_used
-        ):
-            blob = user_messages_for_flow(history, user_text, flow_path)
-            all_rows = load_properties_for_catalog_path(catalog_path_used)
-            candidate_ids, candidate_rows = select_listing_candidates(
-                all_rows,
-                blob,
-                branch=flow_path,
-            )
-            catalog_block = (
-                "### CANDIDATOS OBLIGATORIOS (solo estos IDs)\n"
-                + build_mandatory_candidates_block(candidate_rows, flow_path)
-            )
-            row_count = len(candidate_rows)
-            logger.info(
-                "Candidatos listado flow=%s ids=%s path=%r",
-                flow_path,
-                candidate_ids,
-                catalog_path_used,
-            )
-        elif flow_path in ("compra", "alquiler") and not profile_ready:
-            if flow_path == "compra":
-                catalog_block = (
-                    "(Catálogo oculto hasta: tipo de propiedad (casa o departamento), "
-                    "zona o «sin preferencia de zona», dormitorios/ambientes y "
-                    "presupuesto en USD. No menciones propiedades, direcciones, precios "
-                    "ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
-                )
-            else:
-                catalog_block = (
-                    "(Catálogo oculto hasta: tipo de propiedad (casa o departamento), "
-                    "zona/barrio y cantidad de dormitorios o ambientes. "
-                    "No menciones propiedades, direcciones, precios ni uses "
-                    "[LISTADO:ids]. Solo preguntá lo que falta.)"
-                )
-            row_count = 0
-            candidate_ids = []
-        elif row_count:
-            catalog_block = (
-                f"({row_count} propiedades; elegí las más relevantes):\n{catalog_block}"
-            )
-
-        system_prompt = build_flow_system_prompt(
-            tenant_name=ctx.name or "la inmobiliaria",
-            flow_path=flow_path,
-            catalog_block=catalog_block,
-            system_prompt_override=ctx.system_prompt,
-        )
-
-        model_messages = build_model_messages(
-            system_prompt,
-            history,
-            user_text,
-        )
-
-        logger.info(
-            "Invocando LLM flow=%s history=%s messages=%s",
-            flow_path,
-            len(history),
-            len(model_messages),
-        )
-
-        answer = await chat_completion(model_messages)
-
-        clean_answer, raw_alerts, raw_waitlist_tag = parse_flow_alerts(answer)
-        alerts, interest_classification = await resolve_flow_alerts(
-            raw_alerts,
-            history=history,
-            current_user_text=user_text,
-            flow_path=flow_path,
+        turn_result = await process_inbound_message(
             ctx=ctx,
+            session=session,
+            flow_path=flow_path,
+            history=history,
+            user_text=user_text,
             flow_just_switched=flow_just_switched,
         )
-        property_ref = extract_property_ref(
-            "",
-            flow_path=flow_path,
-            catalog_sale_path=ctx.catalog_csv_path,
-            catalog_rent_path=ctx.catalog_rent_csv_path,
-            history=history,
-            current_user_text=user_text,
-            user_only=True,
-        )
-        if interest_classification and interest_classification.property_ref.strip():
-            property_ref = interest_classification.property_ref.strip()
-        clean_answer = apply_visit_handoff(
-            clean_answer,
-            alerts,
-            property_ref=property_ref,
-            flow_path=flow_path,
-            current_user_text=user_text,
-        )
-        clean_answer = apply_captacion_closing(clean_answer, alerts)
-        if (
-            flow_path in ("compra", "alquiler")
-            and profile_ready
-            and not user_wants_specific_property_detail(user_text)
-        ):
-            clean_answer = ensure_listado_from_candidates(
-                clean_answer,
-                candidate_ids,
-                catalog_path_used,
+
+        if turn_result.capture_data is not None:
+            await asyncio.to_thread(
+                save_session,
+                ctx.phone_number_id,
+                wa_id,
+                flow_path=flow_path,
+                capture_data=turn_result.capture_data,
             )
-        clean_answer = suppress_premature_catalog_outbound(
-            clean_answer,
-            history=history,
-            current_user_text=user_text,
-            flow_path=flow_path,
-        )
-        clean_answer = enrich_detail_media_from_catalog(
-            clean_answer,
-            catalog_csv_path=catalog_path_used,
-            property_ref=property_ref,
-            current_user_text=user_text,
-            flow_path=flow_path,
-            history=history,
-            catalog_sale_path=ctx.catalog_csv_path,
-            catalog_rent_path=ctx.catalog_rent_csv_path,
-        )
+
+        clean_answer = turn_result.clean_answer
+        raw_alerts = turn_result.raw_alerts
+        alerts = turn_result.alerts
+        interest_classification = turn_result.interest_classification
+        property_ref = turn_result.property_ref
+        catalog_path_used = turn_result.catalog_path_used
+        raw_waitlist_tag = turn_result.has_waitlist_tag
 
         logger.info(
-            "LLM respondio answer_len=%s raw_alerts=%s alerts=%s",
+            "Turno kind=%s answer_len=%s raw_alerts=%s alerts=%s ids=%s",
+            turn_result.plan_kind,
             len(clean_answer),
             raw_alerts,
             alerts,
+            turn_result.candidate_ids,
         )
 
         outbound_for_client = await deliver_bot_response(

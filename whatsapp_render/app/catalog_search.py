@@ -309,8 +309,23 @@ def select_listing_candidates(
     *,
     branch: str,
     max_items: int = _MAX_LISTING_ITEMS,
+    catalog_path: str | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     criteria = parse_search_criteria(blob, branch=branch)
-    filtered = filter_catalog_rows(rows, criteria, branch)
+    working = list(rows)
+    if catalog_path:
+        try:
+            from app.catalog_rag import search_catalog_ids
+
+            rag_ids = search_catalog_ids(catalog_path, branch, blob, k=15)
+            if rag_ids:
+                by_id = {str(r.get("ID", "")).strip(): r for r in rows}
+                ordered = [by_id[i] for i in rag_ids if i in by_id]
+                rest = [r for r in rows if str(r.get("ID", "")).strip() not in rag_ids]
+                working = ordered + rest
+        except Exception:
+            logger.exception("catalog_rag falló; filtro regex-only")
+
+    filtered = filter_catalog_rows(working, criteria, branch)
     picked_rows = filtered[:max_items]
     return pick_listing_ids(picked_rows, max_items=max_items), picked_rows

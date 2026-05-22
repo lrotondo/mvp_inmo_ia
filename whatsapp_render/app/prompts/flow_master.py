@@ -198,3 +198,91 @@ def build_flow_system_prompt(
         parts.append(f"\n(Catálogo de {path} momentáneamente sin stock. Ofrece asistencia humana directa.)")
 
     return "\n\n".join(parts)
+
+
+_TURN_SLIM: dict[str, str] = {
+    "triage": BRANCH_TRIAGE,
+    "intake": (
+        "### MODO INDAGACIÓN\n"
+        "Hacé UNA sola pregunta por mensaje. No menciones propiedades, precios, "
+        "direcciones ni barrios. Prohibido `[LISTADO:ids]`."
+    ),
+    "listing": (
+        "### MODO LISTADO (solo intro)\n"
+        "El sistema ya envió las fotos de las opciones. Escribí solo 1-2 líneas de "
+        "intro amable. Prohibido listar propiedades, precios, zonas, viñetas numeradas "
+        "y `[LISTADO:ids]`."
+    ),
+    "detail": (
+        "### MODO DETALLE\n"
+        "El cliente pide más info de UNA propiedad. Enganche breve (1-3 líneas). "
+        "El backend envía ficha y fotos. Prohibido `[LISTADO:ids]` y URLs crudas."
+    ),
+    "captacion": BRANCH_CAPTACION.format(closing_text=CLOSING_CAPTACION_TEXT),
+    "general": (
+        "### MODO GENERAL\n"
+        "Respondé con calidez y brevedad. No inventes propiedades del catálogo."
+    ),
+}
+
+_TURN_ALERTS: dict[str, str] = {
+    "compra": ALERTA_COMPRA,
+    "alquiler": ALERTA_ALQUILER,
+    "captacion": ALERTA_CAPTACION,
+}
+
+
+def build_turn_system_prompt(
+    *,
+    tenant_name: str,
+    flow_path: str,
+    turn_kind: str,
+    catalog_block: str = "",
+    system_prompt_override: str | None = None,
+) -> str:
+    """Prompt corto por tipo de turno (sin catálogo completo en listado/intake)."""
+    name = (tenant_name or "").strip() or "la inmobiliaria"
+    path = (flow_path or "nuevo").strip().lower()
+    if path not in _FLOW_LABELS:
+        path = "nuevo"
+    kind = (turn_kind or "general").strip().lower()
+
+    if (system_prompt_override or "").strip():
+        base = system_prompt_override.strip()
+    else:
+        base = MASTER_PREFIX_TEMPLATE.format(
+            tenant_name=name,
+            flow_path_label=_FLOW_LABELS[path],
+        )
+
+    parts = [base, _TURN_SLIM.get(kind, _TURN_SLIM["general"])]
+
+    if path in _TURN_ALERTS and kind not in ("listing", "intake", "triage"):
+        parts.append(_TURN_ALERTS[path])
+
+    if kind == "detail" and path in ("compra", "alquiler"):
+        parts.append(
+            "### DETALLE UNA PROPIEDAD\n"
+            "Enganche breve. El backend envía ficha y fotos. Prohibido `[LISTADO:ids]`."
+        )
+
+    if path == "compra" and kind not in ("listing", "intake"):
+        parts.append(WAITLIST_INSTRUCTIONS_COMPRA)
+    elif path == "alquiler" and kind not in ("listing", "intake"):
+        parts.append(WAITLIST_INSTRUCTIONS_ALQUILER)
+
+    if kind == "listing":
+        parts.append(
+            "\n(No hay catálogo en este turno: el backend envía las opciones.)"
+        )
+    elif kind == "intake":
+        parts.append(catalog_block or "(Catálogo oculto hasta completar el perfil.)")
+    elif path == "captacion":
+        parts.append("\n(No aplica catálogo de propiedades.)")
+    elif catalog_block.strip() and kind == "detail":
+        label = "VENTA" if path == "compra" else "ALQUILER"
+        parts.append(f"\n### FICHA / CONTEXTO ({label})\n{catalog_block}")
+    elif path == "nuevo":
+        parts.append("\n(Catálogo oculto hasta definir compra o alquiler.)")
+
+    return "\n\n".join(parts)
