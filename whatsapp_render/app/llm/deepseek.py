@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from app.llm.config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL
+from app.llm.logging_utils import log_llm_request, log_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ async def chat_completion(
     *,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    log_context: dict[str, Any] | None = None,
 ) -> str:
     api_key = DEEPSEEK_API_KEY
     if not api_key:
@@ -35,28 +37,43 @@ async def chat_completion(
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
 
+    log_llm_request(payload, extra_context=log_context)
+
     async with httpx.AsyncClient(timeout=45.0) as client:
         try:
             response = await client.post(_CHAT_URL, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            logger.error("Error DeepSeek: %s", e.response.text)
+            logger.error("llm_error status=%s body=%s", e.response.status_code, e.response.text)
             return (
                 "Disculpame, tuve un problema al consultar el catálogo. "
-                "¿Me podrás repetir la pregunta?"
+                "¿Me podrés repetir la pregunta?"
             )
 
     choices = data.get("choices") or []
     if not choices:
+        log_llm_response("")
         return "No pude generar una respuesta en este momento."
     message = choices[0].get("message") or {}
-    return str(message.get("content") or "").strip()
+    content = str(message.get("content") or "").strip()
+    log_llm_response(content)
+    return content
 
 
-async def chat_short(system: str, user: str) -> str:
+async def chat_short(
+    system: str,
+    user: str,
+    *,
+    log_context: dict[str, Any] | None = None,
+) -> str:
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    return await chat_completion(messages, max_tokens=256, temperature=0.2)
+    return await chat_completion(
+        messages,
+        max_tokens=256,
+        temperature=0.2,
+        log_context=log_context,
+    )

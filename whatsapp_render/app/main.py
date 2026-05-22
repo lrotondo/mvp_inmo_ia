@@ -90,6 +90,9 @@ def _configure_logging() -> None:
         "app.meta_client",
         "app.leads",
         "app.session_state",
+        "app.llm",
+        "app.llm.deepseek",
+        "app.conversation_flow",
     ):
         logging.getLogger(name).setLevel(logging.INFO)
 

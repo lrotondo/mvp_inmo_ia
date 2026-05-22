@@ -9,6 +9,7 @@ Fases:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -320,13 +321,58 @@ def _detail_intro(user_text: str, listing_rows: list) -> str:
     return "¡Excelente elección! Te paso la ficha con todos los detalles 👇"
 
 
+def _prompt_source_label(system_prompt_override: str | None) -> str:
+    if (system_prompt_override or "").strip():
+        return "tenant_db"
+    if os.environ.get("MINIMAL_SYSTEM_PROMPT", "").strip():
+        return "env_MINIMAL_SYSTEM_PROMPT"
+    return "minimal_default"
+
+
+def _catalog_context_for_log(
+    *,
+    flow_path: str,
+    catalog_path: str | None,
+    catalog_block: str,
+    capture_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    raw = (capture_data or {}).get("last_listing")
+    listing_ids: list[str] = []
+    listing_branch = ""
+    listing_catalog_path = ""
+    if isinstance(raw, dict):
+        ids = raw.get("ids") or []
+        if isinstance(ids, list):
+            listing_ids = [str(i).strip() for i in ids if str(i).strip()]
+        listing_branch = str(raw.get("branch") or "").strip()
+        listing_catalog_path = str(raw.get("catalog_path") or "").strip()
+
+    if not (catalog_block or "").strip():
+        source = "none"
+    elif flow_path == "captacion" and not listing_ids:
+        source = "captacion_placeholder"
+    elif listing_ids:
+        source = "last_listing"
+    else:
+        source = "unknown"
+
+    return {
+        "catalog_source": source,
+        "catalog_path": catalog_path or listing_catalog_path or None,
+        "last_listing_ids": listing_ids,
+        "last_listing_branch": listing_branch or None,
+        "catalog_block_chars": len((catalog_block or "").strip()),
+    }
+
+
 async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     catalog_block = ""
+    listing_rows: list = []
     if plan.catalog_path:
-        rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
-        if rows:
+        listing_rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
+        if listing_rows:
             branch = plan.profile.branch if plan.profile else ctx.flow_path
-            catalog_block = build_listing_catalog_block(rows, branch=branch)
+            catalog_block = build_listing_catalog_block(listing_rows, branch=branch)
     if not catalog_block and ctx.flow_path == "captacion":
         catalog_block = "(No aplica catálogo de búsqueda.)"
 
@@ -337,7 +383,31 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
         system_prompt_override=ctx.system_prompt_override,
     )
     messages = build_model_messages(system, user_text)
-    return await chat_completion(messages, max_tokens=_CHAT_MAX_TOKENS)
+
+    log_context: dict[str, Any] = {
+        "phase": plan.phase.value,
+        "flow_path": ctx.flow_path,
+        "tenant_name": ctx.tenant_name,
+        "prompt_source": _prompt_source_label(ctx.system_prompt_override),
+        "user_message": (user_text or "").strip(),
+        "max_tokens": _CHAT_MAX_TOKENS,
+    }
+    log_context.update(
+        _catalog_context_for_log(
+            flow_path=ctx.flow_path,
+            catalog_path=plan.catalog_path,
+            catalog_block=catalog_block,
+            capture_data=ctx.capture_data,
+        )
+    )
+    if plan.profile:
+        log_context["search_profile"] = plan.profile.to_dict()
+
+    return await chat_completion(
+        messages,
+        max_tokens=_CHAT_MAX_TOKENS,
+        log_context=log_context,
+    )
 
 
 async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
