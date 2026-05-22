@@ -2,9 +2,24 @@ from __future__ import annotations
 
 CLOSING_CAPTACION_TEXT = (
     "Muchas gracias por la información. Ya registré los datos de tu propiedad. "
-    "Un asesor especialista de nuestro equipo se va a comunican con vos a la brevedad "
+    "Un asesor especialista de nuestro equipo se va a comunicar con vos a la brevedad "
     "para coordinar los pasos a seguir y realizar la tasación."
 )
+
+VISIT_HANDOFF_TEMPLATE = (
+    "¡Perfecto! Registré tu interés{property_part}.\n\n"
+    "Un asesor de nuestro equipo se va a comunicar con vos por WhatsApp a la brevedad "
+    "para coordinar la visita según la disponibilidad real.\n\n"
+    "Si tenés alguna preferencia general (mañana, tarde o fin de semana), contanos; "
+    "el asesor lo tendrá en cuenta al contactarte."
+)
+
+
+def format_visit_handoff(property_ref: str) -> str:
+    prop = (property_ref or "").strip()
+    part = f" en *{prop}*" if prop else ""
+    return VISIT_HANDOFF_TEMPLATE.format(property_part=part)
+
 
 # Versiones modulares y limpias de alertas (sin mezclar ramas)
 ALERTA_COMPRA = """
