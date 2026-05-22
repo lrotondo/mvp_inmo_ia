@@ -105,8 +105,12 @@ _PROPERTY_CHOICE_RE = re.compile(
 
 _NO_DEFINED_ZONE_RE = re.compile(
     r"\b("
-    r"no\s+tengo\s+zona|sin\s+zona\s+definida|no\s+tengo\s+barrio|"
-    r"cualquier\s+zona|sin\s+preferencia\s+de\s+zona|no\s+importa\s+la\s+zona|"
+    r"no\s+tengo\s+zona|no\s+tengo\s+preferencia\s+de\s+zona|"
+    r"sin\s+zona\s+definida|no\s+tengo\s+barrio|"
+    r"cualquier\s+zona|cualquier\s+barrio|"
+    r"sin\s+preferencia\s+de\s+zona|no\s+importa\s+la\s+zona|"
+    r"no\s+me\s+importa\s+(?:la\s+)?zona|"
+    r"toda\s+la\s+ciudad|en\s+cualquier\s+parte|"
     r"no\s+tengo\s+ubicaci[oó]n\s+definida|sin\s+ubicaci[oó]n\s+definida"
     r")\b",
     re.I,
@@ -126,11 +130,31 @@ _ZONE_SIGNAL_RE = re.compile(
 
 _BEDROOM_SIGNAL_RE = re.compile(
     r"\b("
+    r"\d+\s*(?:ó|o|or|y)\s*m[aá]s\s*dormitorios?|"
+    r"m[aá]s\s+de\s+\d+\s*dorm(?:itorios?)?|"
+    r"\d+\s*\+\s*dorm(?:itorios?)?|"
     r"\d+\s*(?:dormitorios?|dorm\.?|ambientes?)|"
     r"mono\s*amb(?:iente)?|"
     r"(?:un|una|dos|tres|cuatro|cinco|seis)\s+dormitorios?|"
     r"(?:un|una|dos|tres|cuatro)\s+ambientes?"
     r")\b",
+    re.I,
+)
+
+_BUDGET_USD_RE = re.compile(
+    r"(?:"
+    r"us\s*\$?\s*[\d.,]+|"
+    r"usd\s*[\d.,]+|"
+    r"\$\s*[\d.,]+\s*(?:usd|d[oó]lares?)?|"
+    r"presupuesto\s*(?:de\s+)?[\d.,]+|"
+    r"tengo\s+[\d.,]{4,}|"
+    r"[\d]{2,3}[.,]?\d{3}\s*(?:usd|d[oó]lares?)?"
+    r")",
+    re.I,
+)
+
+_PROPERTY_TYPE_RE = re.compile(
+    r"\b(casa|departamento|depto|duplex|d[uú]plex|ph|lote|terreno|local)\b",
     re.I,
 )
 
@@ -228,6 +252,10 @@ def user_declined_zone_preference(user_messages_text: str) -> bool:
     return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
 
 
+def user_has_budget_usd(user_messages_text: str) -> bool:
+    return bool(_BUDGET_USD_RE.search(user_messages_text))
+
+
 def user_search_profile_ready(
     history: list[HistoryTurn],
     current_user_text: str,
@@ -235,6 +263,7 @@ def user_search_profile_ready(
 ) -> bool:
     """
     True si el cliente ya indicó zona (o «cualquier zona») y cantidad de dormitorios/ambientes.
+    En compra también requiere presupuesto en USD.
     Puerta para listados y material visual: evita mostrar stock antes de indagar.
     """
     path = (flow_path or "").strip().lower()
@@ -249,6 +278,8 @@ def user_search_profile_ready(
         _ZONE_SIGNAL_RE.search(blob)
     )
     has_beds = bool(_BEDROOM_SIGNAL_RE.search(blob))
+    if path == "compra":
+        return has_zone and has_beds and user_has_budget_usd(blob)
     return has_zone and has_beds
 
 

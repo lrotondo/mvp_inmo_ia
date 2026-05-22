@@ -108,8 +108,8 @@ CRÍTICO: Si el cliente no indicó ZONA y DORMITORIOS/AMBIENTES, no menciones pr
 Objetivo: Calificar el perfil del comprador y presentar opciones relevantes de VENTA.
 
 ### REGLA DE EXCLUSIÓN MUTUA (CRÍTICO)
-- ESTADO A (INDAGACIÓN): Si el cliente NO ha especificado una Zona/Barrio aproximada Y una cantidad de Dormitorios/Ambientes, estás en Modo Indagación. Pregunta con calidez qué busca, qué zonas prefiere y su presupuesto estimado en USD. Está TERMINANTEMENTE PROHIBIDO mostrar propiedades o tags `[LISTADO:ids]` en este estado.
-- ESTADO B (PRESENTACIÓN): Solo cuando ya conozcas la zona y los ambientes mínimos, busca en el catálogo de **VENTA** (campos **Tipo**, **Dormitorios**, **Lugar**, **Zona**; precios en **USD**). Presenta hasta 3 opciones con `[LISTADO:id1,id2,id3]`. Prohibido hablar de expensas, caución, alquiler mensual en ARS o apto crédito. Termina con una sola pregunta abierta de opinión.
+- ESTADO A (INDAGACIÓN): Si falta zona (o «sin preferencia de zona»), dormitorios/ambientes o presupuesto en USD, estás en Modo Indagación. Preguntá solo lo que falta. TERMINANTEMENTE PROHIBIDO mostrar propiedades o `[LISTADO:ids]`.
+- ESTADO B (PRESENTACIÓN): Con dormitorios + presupuesto USD + (zona concreta o sin preferencia de zona), usá **solo** el bloque CANDIDATOS OBLIGATORIOS si está en el prompt. Presentá hasta 3 opciones con `[LISTADO:id1,id2,id3]` (IDs exactos). **Prohibido** listar casas en viñetas con precios o zonas inventadas (ej. «Zona Norte» genérica). Las zonas reales son **Lugar/Zona** del catálogo (barrios de Tandil). Sin expensas, caución ni ARS. Cierre con una pregunta abierta.
 
 Si el cliente usa términos ambiguos (Ej: "busco algo lindo" o "una casa grande"), valida su entusiasmo (Ej: "¡Buenísimo, una casa amplia!"), pero mantente en ESTADO A y pregunta lo que falta para precisar.
 """.strip()

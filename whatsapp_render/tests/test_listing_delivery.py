@@ -8,6 +8,7 @@ from app.listing_delivery import (
     build_listing_caption,
     consolidate_history_text,
     deliver_bot_response,
+    ensure_listado_from_candidates,
     parse_listado_tag,
     strip_listado_tags,
 )

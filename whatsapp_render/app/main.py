@@ -11,9 +11,12 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
-from app.catalog import get_catalog_for_flow
-from app.lead_context import user_search_profile_ready
-from app.listing_delivery import suppress_premature_catalog_outbound
+from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
+from app.catalog_search import (
+    build_mandatory_candidates_block,
+    select_listing_candidates,
+)
+from app.lead_context import user_messages_for_flow, user_search_profile_ready
 from app.conversation import (
     append_conversation_turn,
     build_model_messages,
@@ -37,7 +40,14 @@ from app.meta_auth import (
     validate_meta_verify_token,
 )
 from app.leads import try_register_lead
-from app.detail_media import enrich_detail_media_from_catalog
+from app.detail_media import (
+    enrich_detail_media_from_catalog,
+    user_wants_specific_property_detail,
+)
+from app.listing_delivery import (
+    ensure_listado_from_candidates,
+    suppress_premature_catalog_outbound,
+)
 from app.listing_delivery import deliver_bot_response
 from app.prompts.flow_master import build_flow_system_prompt
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
@@ -544,13 +554,47 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         profile_ready = user_search_profile_ready(
             history, user_text, flow_path
         )
-        if flow_path in ("compra", "alquiler") and not profile_ready:
-            catalog_block = (
-                "(Catálogo oculto hasta que el cliente indique zona/barrio y "
-                "cantidad de dormitorios o ambientes. No menciones propiedades, "
-                "direcciones, precios ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
+        candidate_ids: list[str] = []
+        candidate_rows: list[dict[str, Any]] = []
+        if (
+            flow_path in ("compra", "alquiler")
+            and profile_ready
+            and catalog_path_used
+        ):
+            blob = user_messages_for_flow(history, user_text, flow_path)
+            all_rows = load_properties_for_catalog_path(catalog_path_used)
+            candidate_ids, candidate_rows = select_listing_candidates(
+                all_rows,
+                blob,
+                branch=flow_path,
             )
+            catalog_block = (
+                "### CANDIDATOS OBLIGATORIOS (solo estos IDs)\n"
+                + build_mandatory_candidates_block(candidate_rows, flow_path)
+            )
+            row_count = len(candidate_rows)
+            logger.info(
+                "Candidatos listado flow=%s ids=%s path=%r",
+                flow_path,
+                candidate_ids,
+                catalog_path_used,
+            )
+        elif flow_path in ("compra", "alquiler") and not profile_ready:
+            if flow_path == "compra":
+                catalog_block = (
+                    "(Catálogo oculto hasta zona o «sin preferencia de zona», "
+                    "cantidad de dormitorios/ambientes y presupuesto en USD. "
+                    "No menciones propiedades, direcciones, precios ni uses "
+                    "[LISTADO:ids]. Solo preguntá lo que falta.)"
+                )
+            else:
+                catalog_block = (
+                    "(Catálogo oculto hasta que el cliente indique zona/barrio y "
+                    "cantidad de dormitorios o ambientes. No menciones propiedades, "
+                    "direcciones, precios ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
+                )
             row_count = 0
+            candidate_ids = []
         elif row_count:
             catalog_block = (
                 f"({row_count} propiedades; elegí las más relevantes):\n{catalog_block}"
@@ -606,6 +650,17 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             current_user_text=user_text,
         )
         clean_answer = apply_captacion_closing(clean_answer, alerts)
+        if (
+            flow_path in ("compra", "alquiler")
+            and profile_ready
+            and candidate_ids
+            and not user_wants_specific_property_detail(user_text)
+        ):
+            clean_answer = ensure_listado_from_candidates(
+                clean_answer,
+                candidate_ids,
+                catalog_path_used,
+            )
         clean_answer = suppress_premature_catalog_outbound(
             clean_answer,
             history=history,

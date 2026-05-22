@@ -28,6 +28,18 @@ _CATALOG_ESSAY_LINE_RE = re.compile(
     r"Departamento\s+a\s+estrenar|tercer\s+piso\s+por\s+ascensor",
     re.I,
 )
+_INVENTED_LISTING_LINE_RE = re.compile(
+    r"(?:"
+    r"USD\s*[\d.,]+|US\$[\d.,]+|"
+    r"\*?\s*Zona\s+(?:Norte|Sur|Oeste|Este)\*?|"
+    r"Casa\s+en\s+\*?Zona|"
+    r"Depto\s+en\s+\*?Zona|"
+    r"\d+\s*dormitorios?.*(?:USD|US\$)|"
+    r"Precio\s+USD\s*[\d.,]+|"
+    r"Precio\s+mensual\s+ARS"
+    r")",
+    re.I,
+)
 _MAX_LISTING_ITEMS = 3
 
 
@@ -53,6 +65,90 @@ def _strip_catalog_essay_lines(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
+def strip_invented_listings(message: str) -> str:
+    """Quita viñetas en prosa con precios/zonas inventadas (sin [LISTADO:])."""
+    body = (message or "").strip()
+    if not body or _LISTADO_TAG_RE.search(body):
+        return _strip_catalog_essay_lines(body)
+
+    kept: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            kept.append(line)
+            continue
+        is_bullet = bool(re.match(r"^[-•*]\s+", stripped))
+        if is_bullet and _INVENTED_LISTING_LINE_RE.search(stripped):
+            continue
+        if _INVENTED_LISTING_LINE_RE.search(stripped) and re.search(
+            r"\d", stripped
+        ):
+            continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def _listado_ids_valid(
+    property_ids: list[str],
+    catalog_csv_path: str | None,
+) -> bool:
+    if not property_ids:
+        return False
+    rows = get_properties_by_ids(
+        catalog_csv_path,
+        property_ids,
+        max_items=_MAX_LISTING_ITEMS,
+    )
+    found = {str(r.get("ID", "")).strip() for r in rows}
+    return all(pid in found for pid in property_ids)
+
+
+def ensure_listado_from_candidates(
+    message: str,
+    candidate_ids: list[str],
+    catalog_csv_path: str | None,
+) -> str:
+    """
+    Garantiza [LISTADO:ids] del backend cuando el LLM listó en prosa o omitió el tag.
+    """
+    ids = [pid.strip() for pid in candidate_ids if pid.strip()][:_MAX_LISTING_ITEMS]
+    if not ids:
+        return strip_invented_listings(message)
+
+    body = strip_invented_listings(message)
+    parsed = parse_listado_tag(body)
+    if parsed and _listado_ids_valid(parsed.property_ids, catalog_csv_path):
+        return body
+
+    tag_line = f"[LISTADO:{','.join(ids)}]"
+    if parsed:
+        intro = _strip_catalog_essay_lines(parsed.intro)
+        closing = _strip_catalog_essay_lines(parsed.closing)
+        parts = [p for p in (intro, tag_line, closing) if p.strip()]
+        return "\n\n".join(parts)
+
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    intro_lines: list[str] = []
+    closing_lines: list[str] = []
+    for line in lines:
+        if _INVENTED_LISTING_LINE_RE.search(line):
+            continue
+        if not intro_lines:
+            intro_lines.append(line)
+        else:
+            closing_lines.append(line)
+
+    intro = "\n".join(intro_lines[:4]).strip()
+    closing = "\n".join(closing_lines[-2:]).strip()
+    if not closing or closing.lower() == intro.lower():
+        closing = "¿Alguna de estas opciones te llama la atención para pasarte más detalles?"
+
+    parts = [intro, tag_line, closing]
+    result = "\n\n".join(p for p in parts if p.strip())
+    logger.info("listado_inyectado_backend ids=%s", ids)
+    return result
+
+
 def suppress_premature_catalog_outbound(
     message: str,
     *,
@@ -69,7 +165,7 @@ def suppress_premature_catalog_outbound(
         current_user_text,
         flow_path,
     ):
-        return (message or "").strip()
+        return strip_invented_listings(message)
 
     body = (message or "").strip()
     if not body:
