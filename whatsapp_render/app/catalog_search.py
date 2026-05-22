@@ -83,6 +83,9 @@ _KNOWN_ZONE_PHRASES: tuple[str, ...] = (
 )
 
 
+_CONSULTAR_RE = re.compile(r"\bconsultar\b", re.I)
+
+
 @dataclass(frozen=True)
 class SearchCriteria:
     property_type: str | None
@@ -90,6 +93,35 @@ class SearchCriteria:
     max_price_usd: int | None
     zone_tokens: tuple[str, ...]
     any_zone: bool
+    property_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ListingFilterCriteria:
+    """Criterios para filtro relajado / fallback (puede omitir campos)."""
+
+    property_types: tuple[str, ...] = ()
+    min_bedrooms: int = 0
+    max_price_usd: int | None = None
+    zone_tokens: tuple[str, ...] = ()
+    any_zone: bool = False
+
+
+def is_consultar_price(row: dict[str, Any]) -> bool:
+    return bool(_CONSULTAR_RE.search(str(row.get("Precio", "")).strip()))
+
+
+def listing_filter_from_profile(profile: Any) -> ListingFilterCriteria:
+    types = tuple(profile.property_types or ())
+    if not types and getattr(profile, "property_type", None):
+        types = (profile.property_type,)
+    return ListingFilterCriteria(
+        property_types=types,
+        min_bedrooms=int(getattr(profile, "min_bedrooms", 0) or 0),
+        max_price_usd=getattr(profile, "max_price_usd", None),
+        zone_tokens=tuple(getattr(profile, "zone_tokens", ()) or ()),
+        any_zone=bool(getattr(profile, "any_zone", False)),
+    )
 
 
 def parse_price_usd(raw: str) -> int | None:
@@ -153,23 +185,31 @@ def _parse_max_budget_usd(blob: str) -> int | None:
 
 
 def parse_property_type_from_blob(blob: str) -> str | None:
-    """
-    Tipo de búsqueda para listados: solo «casa» o «departamento».
-    duplex / PH / depto se normalizan a departamento.
-    """
-    match = _USER_TYPE_RE.search(blob)
-    if not match:
-        return None
-    word = match.group(1).lower()
-    if word in ("depto", "departamento", "duplex", "dúplex", "ph"):
-        return "departamento"
-    if word == "casa":
-        return "casa"
-    return None
+    """Primer tipo detectado: casa, departamento o lote."""
+    types = parse_property_types_from_blob(blob)
+    return types[0] if types else None
+
+
+def parse_property_types_from_blob(blob: str) -> tuple[str, ...]:
+    text = (blob or "").lower()
+    found: list[str] = []
+    for word in _USER_TYPE_RE.findall(text):
+        w = word.lower()
+        if w in ("depto", "departamento", "duplex", "dúplex", "ph"):
+            kind = "departamento"
+        elif w == "casa":
+            kind = "casa"
+        elif w in ("lote", "terreno"):
+            kind = "lote"
+        else:
+            continue
+        if kind not in found:
+            found.append(kind)
+    return tuple(found)
 
 
 def _classify_row_property_kind(row: dict[str, Any]) -> str | None:
-    """Clasifica fila del catálogo como casa o departamento (duplex/ph → departamento)."""
+    """Clasifica fila: casa, departamento o lote (duplex/ph → departamento)."""
     tipo = str(row.get("Tipo", "")).lower().strip()
     titulo = str(row.get("Titulo", "")).lower()
     caract = str(row.get("Caracteristicas", "")).lower()
@@ -179,12 +219,14 @@ def _classify_row_property_kind(row: dict[str, Any]) -> str | None:
             return "departamento"
         if "casa" in tipo:
             return "casa"
-        if "lote" in tipo or "terreno" in tipo or "local" in tipo or "campo" in tipo:
-            return None
+        if any(k in tipo for k in ("lote", "terreno", "parcela", "campo", "chacra", "quinta")):
+            return "lote"
 
     combined = f"{titulo} {caract}"
     if any(k in combined for k in ("departamento", " depto", "duplex", "dúplex")):
         return "departamento"
+    if any(k in combined for k in ("lote", "terreno", "parcela")):
+        return "lote"
     if "casa" in combined and "departamento" not in titulo[:30]:
         return "casa"
     return None
@@ -265,6 +307,15 @@ def _row_matches_type(row: dict[str, Any], property_type: str | None) -> bool:
     return kind == property_type
 
 
+def _row_matches_types(row: dict[str, Any], property_types: tuple[str, ...]) -> bool:
+    if not property_types:
+        return True
+    kind = _classify_row_property_kind(row)
+    if kind is None:
+        return False
+    return kind in property_types
+
+
 def _row_matches_zone(row: dict[str, Any], criteria: SearchCriteria) -> bool:
     if criteria.any_zone or not criteria.zone_tokens:
         return True
@@ -302,25 +353,69 @@ def filter_catalog_rows(
     criteria: SearchCriteria,
     branch: str,
 ) -> list[dict[str, Any]]:
-    if not criteria.property_type:
+    types = criteria.property_types or (
+        (criteria.property_type,) if criteria.property_type else ()
+    )
+    if not types:
         logger.warning("filter_catalog_rows sin property_type; sin candidatos")
         return []
 
     path = (branch or "").strip().lower()
     scored: list[tuple[float, dict[str, Any]]] = []
     for row in rows:
-        if not _row_matches_type(row, criteria.property_type):
+        if not _row_matches_types(row, types):
             continue
         beds = parse_bedrooms_from_row(row)
         if criteria.min_bedrooms and beds is not None and beds < criteria.min_bedrooms:
             continue
-        price = parse_price_usd(str(row.get("Precio", "")))
-        if path == "compra" and criteria.max_price_usd and price is not None:
-            if price > criteria.max_price_usd:
+        if path == "compra" and criteria.max_price_usd and not is_consultar_price(row):
+            price = parse_price_usd(str(row.get("Precio", "")))
+            if price is not None and price > criteria.max_price_usd:
                 continue
         if not _row_matches_zone(row, criteria):
             continue
         scored.append((_score_row(row, criteria), row))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [row for _, row in scored]
+
+
+def filter_catalog_rows_relaxed(
+    rows: list[dict[str, Any]],
+    criteria: ListingFilterCriteria,
+    branch: str,
+) -> list[dict[str, Any]]:
+    """Fallback: no exige tipo si está vacío; presupuesto ignora Precio «consultar»."""
+    path = (branch or "").strip().lower()
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for row in rows:
+        if criteria.property_types and not _row_matches_types(row, criteria.property_types):
+            continue
+        beds = parse_bedrooms_from_row(row)
+        if criteria.min_bedrooms and beds is not None and beds < criteria.min_bedrooms:
+            continue
+        if path == "compra" and criteria.max_price_usd and not is_consultar_price(row):
+            price = parse_price_usd(str(row.get("Precio", "")))
+            if price is not None and price > criteria.max_price_usd:
+                continue
+        zone_criteria = SearchCriteria(
+            property_type=None,
+            min_bedrooms=0,
+            max_price_usd=None,
+            zone_tokens=criteria.zone_tokens,
+            any_zone=criteria.any_zone,
+        )
+        if criteria.zone_tokens and not _row_matches_zone(row, zone_criteria):
+            continue
+        pseudo = SearchCriteria(
+            property_type=criteria.property_types[0] if criteria.property_types else None,
+            min_bedrooms=criteria.min_bedrooms,
+            max_price_usd=criteria.max_price_usd,
+            zone_tokens=criteria.zone_tokens,
+            any_zone=criteria.any_zone,
+            property_types=criteria.property_types,
+        )
+        scored.append((_score_row(row, pseudo), row))
 
     scored.sort(key=lambda item: item[0], reverse=True)
     return [row for _, row in scored]

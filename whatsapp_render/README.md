@@ -283,8 +283,10 @@ Lógica en [`app/conversation_flow.py`](app/conversation_flow.py) (fachada: [`ap
 | Fase | Comportamiento | LLM |
 |------|----------------|-----|
 | Triage (`nuevo`) | Mensaje fijo: comprar / alquilar / vender | No |
-| Intake (`compra`/`alquiler`) | Guía por pasos (tipo → zona → dormitorios → presupuesto en compra); **no valida** cada respuesta, avanza por turno | No |
-| Listado | Intro fija + `[LISTADO:ids]` + fotos (backend) | No |
+| Intake (`compra`/`alquiler`) | **Una sola pregunta** (tipo, zona, dormitorios, presupuesto en compra); la respuesta libre se parsea con LLM | Sí (extracción) |
+| Listado | LLM elige hasta 3 IDs del catálogo + intro fija + `[LISTADO:ids]` + fotos | Sí (picker) |
+| Más opciones | LLM elige otros IDs excluyendo los ya mostrados | Sí (picker) |
+| Ninguna sirve | Registro en `client_waitlist` + mensaje de confirmación; bot pausado | Sí (clasificador) |
 | Preguntas sobre opciones ya mostradas | Respuesta con datos compactos de las 3 opciones | DeepSeek (prompt mínimo) |
 | Detalle (`opción N`, fotos, elección) | Intro fija + ficha/media | No |
 | Visita / asesor | Texto fijo de handoff; alertas inyectadas por código | No |
@@ -299,7 +301,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Catálogo y relevancia
 
 - Solo propiedades con **`Disponible=si`** (u otro valor afirmativo) entran al catálogo del bot.
-- Selección de listado: filtros por perfil en [`catalog_search.py`](app/catalog_search.py) (tipo, zona, dormitorios, presupuesto).
+- Selección de listado: [`app/llm/listing_picker.py`](app/llm/listing_picker.py) (LLM + validación de IDs); fallback relajado en [`catalog_search.py`](app/catalog_search.py). Precio «consultar» no excluye por presupuesto.
 - Preguntas post-listado: bloque compacto `Opción 1/2/3` solo en turnos de chat, no en el envío de fotos.
 - Planillas Google: editar en Drive; el bot ve cambios tras el TTL (`CATALOG_CACHE_TTL_SECONDS`).
 
@@ -357,7 +359,7 @@ ORDER BY conversation_at DESC;
 
 ## Lista de espera (`client_waitlist`)
 
-El bot **no** registra lista de espera automáticamente. La tabla queda para datos históricos o carga manual. Export CSV:
+Si el cliente indica que **ninguna opción le sirve** tras ver el listado, el bot registra automáticamente en `client_waitlist` (requiere `DATABASE_URL`) y pausa la conversación. Export CSV:
 
 Requiere `WAITLIST_EXPORT_SECRET` y `DATABASE_URL`.
 

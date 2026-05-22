@@ -8,7 +8,20 @@ from app.catalog_profiles import format_row_compact
 from app.property_matching import _normalize_property_match_text
 
 _LAST_LISTING_KEY = "last_listing"
+_SHOWN_LISTING_IDS_KEY = "shown_listing_ids"
 _MAX_LISTING_ITEMS = 3
+
+_REJECT_ALL_LISTING_RE = re.compile(
+    r"\b("
+    r"ninguna\s+(?:me\s+)?(?:sirve|convence|cierra|me\s+gusta)|"
+    r"ninguna\s+de\s+(?:esas|estas)|"
+    r"no\s+me\s+(?:sirve|convence|cierra|gusta)\s+ninguna|"
+    r"nada\s+de\s+esto|no\s+cumple|no\s+cumplen|"
+    r"no\s+es\s+lo\s+que\s+busco|no\s+encuentro\s+lo\s+que\s+busco|"
+    r"no\s+hay\s+nada\s+para\s+m[ií]"
+    r")\b",
+    re.I,
+)
 
 _OPTION_NUMBER_RE = re.compile(
     r"\b(?:opci[oó]n|la\s+opci[oó]n|el\s+de|la\s+de)\s*(?:n[°º]?\s*)?(\d+)\b",
@@ -56,6 +69,27 @@ _LISTING_FOLLOWUP_RE = re.compile(
 )
 
 
+def get_shown_listing_ids(capture_data: dict[str, Any] | None) -> list[str]:
+    raw = (capture_data or {}).get(_SHOWN_LISTING_IDS_KEY)
+    if not isinstance(raw, list):
+        return []
+    return [str(i).strip() for i in raw if str(i).strip()]
+
+
+def merge_shown_listing_ids(
+    capture_data: dict[str, Any],
+    property_ids: list[str],
+) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    seen = set(get_shown_listing_ids(merged))
+    for pid in property_ids:
+        p = str(pid).strip()
+        if p:
+            seen.add(p)
+    merged[_SHOWN_LISTING_IDS_KEY] = sorted(seen)
+    return merged
+
+
 def merge_last_listing_into_capture(
     capture_data: dict[str, Any],
     *,
@@ -72,7 +106,7 @@ def merge_last_listing_into_capture(
         "branch": (branch or "").strip().lower(),
         "catalog_path": catalog_path,
     }
-    return merged
+    return merge_shown_listing_ids(merged, ids)
 
 
 def load_last_listing_rows(
@@ -254,9 +288,18 @@ def current_message_is_browse_only(current_user_text: str) -> bool:
     return bool(_BROWSE_ONLY_RE.search(body))
 
 
+def user_rejects_all_listings(user_text: str) -> bool:
+    text = (user_text or "").strip()
+    if not text:
+        return False
+    return bool(_REJECT_ALL_LISTING_RE.search(text))
+
+
 def user_requests_fresh_listing(user_text: str) -> bool:
     text = (user_text or "").strip()
     if not text:
+        return False
+    if user_rejects_all_listings(text):
         return False
     if current_message_is_browse_only(text):
         return True

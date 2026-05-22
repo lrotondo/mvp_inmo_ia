@@ -16,17 +16,21 @@ from enum import Enum
 from typing import Any
 
 from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
-from app.catalog_search import select_listing_candidates
-from app.capture_flow import append_user_flow_message, prior_user_messages_for_flow
+from app.catalog_profiles import format_row_compact
+from app.capture_flow import append_user_flow_message, prior_user_messages_for_flow, user_messages_for_flow
+from app.llm.intake_extraction import extract_search_criteria
+from app.llm.listing_picker import pick_listing_properties
 from app.conversation import build_model_messages
 from app.llm.deepseek import chat_completion
 from app.listing_context import (
     build_listing_catalog_block,
+    get_shown_listing_ids,
     listing_already_shown,
     load_last_listing_rows,
     merge_last_listing_into_capture,
     property_ref_from_listing_choice,
     resolve_listing_choice_row,
+    user_rejects_all_listings,
     user_requests_fresh_listing,
     user_requests_more_photos,
     user_showed_property_selection,
@@ -34,17 +38,24 @@ from app.listing_context import (
 from app.property_matching import extract_property_ref
 from app.prompts.templates import (
     CLOSING_CAPTACION_TEXT,
+    WAITLIST_CONFIRMATION_TEXT,
     build_chat_system_prompt,
+    build_intake_bundle_question,
     build_triage_message,
     format_visit_handoff,
 )
 from app.search_profile import (
     SearchProfile,
     build_search_profile,
-    bump_intake_step,
+    get_intake_answered,
+    get_intake_prompt_sent,
+    get_intake_raw_text,
+    mark_intake_answered,
+    mark_intake_prompt_sent,
     merge_search_profile_into_capture,
-    reset_intake_step,
+    reset_intake_state,
 )
+from app.waitlist import classify_waitlist_requirements, register_waitlist_entry
 from app.session_state import (
     capture_is_complete,
     merge_capture_from_conversation,
@@ -104,6 +115,7 @@ class Phase(str, Enum):
     DETAIL = "detail"
     GENERAL = "general"
     CAPTACION = "captacion"
+    WAITLIST = "waitlist"
 
 
 @dataclass
@@ -233,10 +245,14 @@ def decide_phase(
     if profile is None or not profile.is_complete:
         return Phase.INTAKE
 
-    if user_requests_fresh_listing(user_text) or not listing_already_shown(
+    shown = listing_already_shown(
         catalog_csv_path=catalog_path,
         capture_data=capture_data,
-    ):
+    )
+    if shown and user_rejects_all_listings(user_text):
+        return Phase.WAITLIST
+
+    if user_requests_fresh_listing(user_text) or not shown:
         return Phase.LISTING
 
     if _wants_visit(path, user_text):
@@ -262,14 +278,6 @@ def plan_message(ctx: FlowContext, user_text: str) -> FlowPlan:
             ctx.catalog_sale_path,
             ctx.catalog_rent_path,
         )
-        if profile.is_complete and catalog_path:
-            rows = load_properties_for_catalog_path(catalog_path)
-            candidate_ids, _ = select_listing_candidates(
-                rows,
-                profile.criteria_blob(),
-                branch=flow_path,
-            )
-
     phase = decide_phase(
         flow_path,
         profile=profile,
@@ -427,13 +435,66 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     )
 
 
+async def _resolve_listing_for_plan(
+    ctx: FlowContext,
+    user_text: str,
+    plan: FlowPlan,
+) -> FlowPlan:
+    if plan.phase != Phase.LISTING or not plan.catalog_path or not plan.profile:
+        return plan
+    if not plan.profile.is_complete:
+        return plan
+
+    rows = load_properties_for_catalog_path(plan.catalog_path)
+    shown = listing_already_shown(
+        catalog_csv_path=plan.catalog_path,
+        capture_data=ctx.capture_data,
+    )
+    more = shown and user_requests_fresh_listing(user_text)
+    exclude = get_shown_listing_ids(ctx.capture_data) if more else []
+    mode = "more_options" if more else "initial"
+
+    pick = await pick_listing_properties(
+        rows,
+        plan.profile,
+        user_text,
+        branch=ctx.flow_path,
+        exclude_ids=exclude,
+        mode=mode,  # type: ignore[arg-type]
+        log_context={
+            "flow_path": ctx.flow_path,
+            "phase": plan.phase.value,
+            "picker_mode": mode,
+        },
+    )
+    plan.candidate_ids = pick.ids
+    plan.row_count = len(pick.rows)
+    return plan
+
+
+def _listing_summary_for_waitlist(
+    catalog_path: str | None,
+    capture_data: dict[str, Any] | None,
+    branch: str,
+) -> str:
+    rows = load_last_listing_rows(catalog_path, capture_data)
+    lines: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        compact = format_row_compact(row, branch)
+        if compact:
+            lines.append(f"Opción {index}: {compact}")
+    return "\n".join(lines)
+
+
 async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     if plan.phase == Phase.TRIAGE:
         return build_triage_message(ctx.tenant_name)
 
-    if plan.phase == Phase.INTAKE and plan.profile:
-        q = plan.profile.next_question()
-        return q or "Contame qué buscás y te ayudo."
+    if plan.phase == Phase.INTAKE:
+        return build_intake_bundle_question(ctx.flow_path)
+
+    if plan.phase == Phase.WAITLIST:
+        return WAITLIST_CONFIRMATION_TEXT
 
     if plan.phase == Phase.LISTING:
         return _build_listing_text(plan)
@@ -459,11 +520,32 @@ async def handle_turn(
     user_text: str,
     session_flow_path: str,
     flow_just_switched: bool = False,
+    phone_number_id: str = "",
+    wa_id: str = "",
+    contact_name: str | None = None,
 ) -> FlowResult:
     """Un turno completo: plan → texto → capture → alertas."""
     working_capture = dict(capture_data)
     if flow_just_switched and flow_path in ("compra", "alquiler"):
-        working_capture = reset_intake_step(working_capture)
+        working_capture = reset_intake_state(working_capture)
+
+    if (
+        flow_path in ("compra", "alquiler")
+        and get_intake_prompt_sent(working_capture)
+        and not get_intake_answered(working_capture)
+        and not flow_just_switched
+        and (user_text or "").strip()
+    ):
+        extracted = await extract_search_criteria(
+            user_text,
+            branch=flow_path,
+            log_context={"flow_path": flow_path},
+        )
+        working_capture = mark_intake_answered(
+            working_capture,
+            user_text,
+            criteria_llm=extracted.to_dict(),
+        )
 
     ctx = FlowContext(
         tenant_name=tenant_name,
@@ -474,11 +556,15 @@ async def handle_turn(
         capture_data=working_capture,
     )
     plan = plan_message(ctx, user_text)
+    plan = await _resolve_listing_for_plan(ctx, user_text, plan)
     text = await build_reply(ctx, user_text, plan)
 
     out_capture = dict(working_capture)
     if plan.profile and flow_path in ("compra", "alquiler"):
         out_capture = merge_search_profile_into_capture(out_capture, plan.profile)
+
+    if plan.phase == Phase.INTAKE:
+        out_capture = mark_intake_prompt_sent(out_capture)
 
     if plan.phase == Phase.LISTING and plan.candidate_ids:
         out_capture = merge_last_listing_into_capture(
@@ -499,6 +585,29 @@ async def handle_turn(
 
     alerts: list[str] = []
     bot_paused = False
+
+    if plan.phase == Phase.WAITLIST and phone_number_id.strip() and wa_id.strip():
+        listing_summary = _listing_summary_for_waitlist(
+            plan.catalog_path,
+            out_capture,
+            flow_path,
+        )
+        requirements = await classify_waitlist_requirements(
+            seek_type=flow_path,
+            intake_text=get_intake_raw_text(out_capture),
+            user_messages=user_messages_for_flow(user_text, flow_path, out_capture),
+            listing_summary=listing_summary,
+            log_context={"flow_path": flow_path, "wa_id": wa_id},
+        )
+        register_waitlist_entry(
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            contact_name=contact_name,
+            seek_type=flow_path,
+            requirements=requirements,
+        )
+        text = WAITLIST_CONFIRMATION_TEXT
+        bot_paused = True
 
     if flow_path == "captacion":
         cap = dict(out_capture)
@@ -523,8 +632,6 @@ async def handle_turn(
         text = format_visit_handoff(property_ref)
 
     out_capture = append_user_flow_message(out_capture, flow_path, user_text)
-    if flow_path in ("compra", "alquiler"):
-        out_capture = bump_intake_step(out_capture, flow_path)
 
     return FlowResult(
         text=text.strip(),

@@ -2,10 +2,13 @@ from app.capture_flow import append_user_flow_message
 from app.catalog_search import parse_search_criteria
 from app.search_profile import (
     build_search_profile,
-    bump_intake_step,
-    get_intake_step,
-    is_intake_script_done,
+    get_intake_answered,
+    is_intake_complete,
+    mark_intake_answered,
+    mark_intake_prompt_sent,
+    reset_intake_state,
 )
+from app.prompts.templates import build_intake_bundle_question
 
 
 def test_zone_parse_centro_and_cerca_del_centro() -> None:
@@ -19,26 +22,28 @@ def test_zone_parse_centro_and_cerca_del_centro() -> None:
     assert "centro" in criteria2.zone_tokens
 
 
-def test_intake_advances_without_validating_zone() -> None:
-    capture: dict = {"intake_step": 0}
-    for user_msg, expect_field in (
-        ("quiero alquilar", "casa"),
-        ("Departamento", "zona"),
-        ("Cerca del centro", "dormitorio"),
-    ):
-        profile = build_search_profile(capture, user_msg, "alquiler")
-        assert not profile.is_complete
-        q = (profile.next_question() or "").lower()
-        assert expect_field in q
-        capture = bump_intake_step(
-            append_user_flow_message(capture, "alquiler", user_msg),
-            "alquiler",
-        )
+def test_intake_bundle_single_question() -> None:
+    capture = reset_intake_state({})
+    profile = build_search_profile(capture, "", "alquiler")
+    assert not profile.is_complete
+    q = profile.next_question() or ""
+    assert "casa" in q.lower() and "dormitorio" in q.lower()
+    assert q == build_intake_bundle_question("alquiler")
 
-    profile = build_search_profile(capture, "2", "alquiler")
-    capture = bump_intake_step(
-        append_user_flow_message(capture, "alquiler", "2"),
-        "alquiler",
+
+def test_intake_complete_after_single_answer() -> None:
+    capture = mark_intake_prompt_sent(reset_intake_state({}))
+    capture = mark_intake_answered(
+        capture,
+        "departamento cerca del centro 2 dormitorios",
+        criteria_llm={
+            "property_types": ["departamento"],
+            "min_bedrooms": 2,
+            "max_price_usd": None,
+            "zone_tokens": ["centro"],
+            "any_zone": False,
+            "notes": "",
+        },
     )
     final = build_search_profile(capture, "", "alquiler")
     assert final.is_complete
@@ -48,26 +53,38 @@ def test_intake_advances_without_validating_zone() -> None:
 
 
 def test_early_listing_on_browse_phrase() -> None:
-    capture = append_user_flow_message({}, "alquiler", "quiero alquilar")
+    capture = mark_intake_answered(
+        mark_intake_prompt_sent({}),
+        "casa 2 dorm sin preferencia de zona",
+        criteria_llm={
+            "property_types": ["casa"],
+            "min_bedrooms": 2,
+            "any_zone": True,
+            "zone_tokens": [],
+            "max_price_usd": None,
+            "notes": "",
+        },
+    )
+    capture = append_user_flow_message(capture, "alquiler", "mostrame opciones")
     profile = build_search_profile(capture, "mostrame opciones", "alquiler")
     assert profile.is_complete
 
 
-def test_compra_intake_four_steps() -> None:
-    capture: dict = {}
-    for msg in ("busco comprar", "casa", "centro", "3 dormitorios"):
-        profile = build_search_profile(capture, msg, "compra")
-        capture = bump_intake_step(
-            append_user_flow_message(capture, "compra", msg),
-            "compra",
-        )
-    profile = build_search_profile(capture, "usd 80000", "compra")
-    capture = bump_intake_step(
-        append_user_flow_message(capture, "compra", "usd 80000"),
-        "compra",
+def test_compra_intake_single_bundle_then_answer() -> None:
+    capture = mark_intake_answered(
+        mark_intake_prompt_sent({}),
+        "casa en centro 3 dormitorios usd 80000",
+        criteria_llm={
+            "property_types": ["casa"],
+            "min_bedrooms": 3,
+            "max_price_usd": 80000,
+            "zone_tokens": ["centro"],
+            "any_zone": False,
+            "notes": "",
+        },
     )
-    assert get_intake_step(capture) >= 4
-    assert is_intake_script_done(capture, "compra")
+    assert get_intake_answered(capture)
+    assert is_intake_complete(capture)
     final = build_search_profile(capture, "", "compra")
     assert final.is_complete
     assert final.property_type == "casa"

@@ -68,7 +68,15 @@ def test_listado_skips_detail_delivery() -> None:
                 catalog_csv_path=TENANT_RENT,
                 current_user_text="cualquier zona, departamento, 2 dormitorios",
                 flow_path="alquiler",
-                capture_data={"intake_step": 3},
+                capture_data={
+                    "intake_answered": True,
+                    "search_criteria_llm": {
+                        "property_types": ["departamento"],
+                        "min_bedrooms": 2,
+                        "any_zone": True,
+                        "zone_tokens": [],
+                    },
+                },
             )
             mock_detail.assert_not_awaited()
             assert mock_image.await_count >= 1
@@ -161,7 +169,15 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
                 catalog_csv_path=TENANT_RENT,
                 current_user_text="en en centro, departamento, 2 dormitorios",
                 flow_path="alquiler",
-                capture_data={"intake_step": 3},
+                capture_data={
+                    "intake_answered": True,
+                    "search_criteria_llm": {
+                        "property_types": ["departamento"],
+                        "min_bedrooms": 2,
+                        "any_zone": False,
+                        "zone_tokens": ["centro"],
+                    },
+                },
             )
             assert mock_text.await_count >= 2
             assert mock_image.await_count == 2

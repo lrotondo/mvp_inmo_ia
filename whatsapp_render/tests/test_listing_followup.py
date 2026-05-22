@@ -14,10 +14,10 @@ def _complete_profile() -> SearchProfile:
     return SearchProfile(
         branch="alquiler",
         property_type="departamento",
+        property_types=("departamento",),
         min_bedrooms=2,
         any_zone=True,
         intake_complete=True,
-        intake_step=3,
     )
 
 
@@ -43,6 +43,18 @@ def test_option_number_alone_is_detail_not_general() -> None:
         catalog_path_used="x",
     )
     assert kind == TurnKind.DETAIL
+
+
+def test_reject_all_goes_waitlist() -> None:
+    capture = {"last_listing": {"ids": ["1", "2", "3"], "catalog_path": "x"}}
+    kind = resolve_turn_kind(
+        "alquiler",
+        profile=_complete_profile(),
+        current_user_text="ninguna de estas me sirve",
+        capture_data=capture,
+        catalog_path_used="x",
+    )
+    assert kind == TurnKind.WAITLIST
 
 
 def test_fresh_listing_request_stays_listing() -> None:

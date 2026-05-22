@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.bedroom_intake import bedroom_signal_in_text, parse_bedroom_count
 from app.capture_flow import append_user_flow_message
-from app.search_profile import build_search_profile
+from app.search_profile import build_search_profile, mark_intake_answered, mark_intake_prompt_sent, reset_intake_state
 
 
 def test_parse_bare_range_2_o_3() -> None:
@@ -23,7 +23,18 @@ def test_search_profile_complete_after_bare_range() -> None:
     capture = append_user_flow_message(
         capture, "alquiler", "sin preferencia de zona"
     )
-    capture["intake_step"] = 3
+    capture = mark_intake_answered(
+        mark_intake_prompt_sent(reset_intake_state(capture)),
+        "departamento sin preferencia de zona 2 ó 3 dormitorios",
+        criteria_llm={
+            "property_types": ["departamento"],
+            "min_bedrooms": 2,
+            "any_zone": True,
+            "zone_tokens": [],
+            "max_price_usd": None,
+            "notes": "",
+        },
+    )
     profile = build_search_profile(capture, "2 ó 3", "alquiler")
     assert profile.is_complete
     assert profile.min_bedrooms == 2

@@ -15,7 +15,6 @@ def test_generate_turn_reply_general_does_not_shadow_load_last_listing() -> None
         min_bedrooms=2,
         any_zone=True,
         intake_complete=True,
-        intake_step=3,
     )
     plan = TurnPlan(
         kind=TurnKind.GENERAL,

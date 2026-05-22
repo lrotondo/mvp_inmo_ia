@@ -3,7 +3,7 @@ from pathlib import Path
 from app.catalog import load_properties_for_catalog_path
 from app.catalog_search import select_listing_candidates
 from app.capture_flow import append_user_flow_message
-from app.search_profile import build_search_profile
+from app.search_profile import build_search_profile, mark_intake_answered, mark_intake_prompt_sent
 from app.turn_handler import TurnContext, plan_turn, resolve_turn_kind, TurnKind
 
 _RENT_CSV = (
@@ -15,11 +15,19 @@ _RENT_CSV = (
 
 
 def test_listing_kind_when_profile_complete() -> None:
-    capture = append_user_flow_message(
-        {},
-        "alquiler",
-        "alquiler casa 2 dormitorios sin preferencia de zona",
+    capture = mark_intake_answered(
+        mark_intake_prompt_sent({}),
+        "casa 2 dormitorios sin preferencia de zona",
+        criteria_llm={
+            "property_types": ["casa"],
+            "min_bedrooms": 2,
+            "any_zone": True,
+            "zone_tokens": [],
+            "max_price_usd": None,
+            "notes": "",
+        },
     )
+    capture = append_user_flow_message(capture, "alquiler", "mostrame opciones")
     profile = build_search_profile(capture, "mostrame opciones", "alquiler")
     assert profile.is_complete
     kind = resolve_turn_kind(
@@ -50,15 +58,25 @@ def test_plan_turn_listing_has_candidates() -> None:
         flow_path="alquiler",
         catalog_sale_path=None,
         catalog_rent_path=str(_RENT_CSV),
-        capture_data={
-            **append_user_flow_message(
-                {},
-                "alquiler",
-                "casa 2 dormitorios sin preferencia de zona",
+        capture_data=mark_intake_answered(
+            mark_intake_prompt_sent(
+                append_user_flow_message(
+                    {},
+                    "alquiler",
+                    "casa 2 dormitorios sin preferencia de zona",
+                )
             ),
-            "intake_step": 3,
-        },
+            "casa 2 dormitorios sin preferencia de zona",
+            criteria_llm={
+                "property_types": ["casa"],
+                "min_bedrooms": 2,
+                "any_zone": True,
+                "zone_tokens": [],
+                "max_price_usd": None,
+                "notes": "",
+            },
+        ),
     )
     plan = plan_turn(ctx, "ver ideas")
     assert plan.kind == TurnKind.LISTING
-    assert plan.candidate_ids
+    # candidate_ids se resuelven en handle_turn (LLM); plan_turn solo fija fase

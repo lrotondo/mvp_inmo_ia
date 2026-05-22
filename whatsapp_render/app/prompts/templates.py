@@ -52,6 +52,38 @@ def format_visit_handoff(property_ref: str) -> str:
     return VISIT_HANDOFF_TEMPLATE.format(property_part=part)
 
 
+_INTAKE_BUNDLE_ALQUILER = (
+    "Para ayudarte mejor, contame en un solo mensaje:\n"
+    "• ¿Preferís *casa* o *departamento*?\n"
+    "• ¿Tenés *zona o barrio* preferido? (Si no, decime «sin preferencia de zona».)\n"
+    "• ¿Cuántos *dormitorios* necesitás?"
+)
+
+_INTAKE_BUNDLE_COMPRA = (
+    "Para ayudarte mejor, contame en un solo mensaje:\n"
+    "• ¿Buscás *casa*, *departamento* o *lote*?\n"
+    "• Si es casa o departamento: ¿*zona o barrio* preferido? (O «sin preferencia de zona».)\n"
+    "• ¿Cuántos *dormitorios* como mínimo? (En lote, solo si te importa.)\n"
+    "• ¿Tenés un *presupuesto máximo en USD*? (Si no, podés omitirlo.)"
+)
+
+
+def build_intake_bundle_question(flow_path: str) -> str:
+    path = (flow_path or "").strip().lower()
+    if path == "alquiler":
+        return _INTAKE_BUNDLE_ALQUILER
+    if path == "compra":
+        return _INTAKE_BUNDLE_COMPRA
+    return "Contame qué buscás y te ayudo."
+
+
+WAITLIST_CONFIRMATION_TEXT = (
+    "Entiendo, ninguna de las opciones encaja con lo que necesitás.\n\n"
+    "Ya te registré en nuestra *lista de espera*. Un asesor del equipo se va a comunicar "
+    "con vos por WhatsApp cuando tengamos propiedades que se acerquen a tu búsqueda."
+)
+
+
 def build_triage_message(tenant_name: str) -> str:
     name = (tenant_name or "").strip() or "la inmobiliaria"
     return (
@@ -84,11 +116,21 @@ def build_chat_system_prompt(
 
     if (system_prompt_override or "").strip():
         base = system_prompt_override.strip()
+        if "{tenant_name}" in base or "{flow_label}" in base:
+            base = base.format(tenant_name=name, flow_label=flow_label)
     else:
-        base = _minimal_prompt_template().format(
-            tenant_name=name,
-            flow_label=flow_label,
-        )
+        env_raw = os.environ.get("MINIMAL_SYSTEM_PROMPT", "").strip()
+        if env_raw:
+            base = (
+                env_raw.format(tenant_name=name, flow_label=flow_label)
+                if "{tenant_name}" in env_raw or "{flow_label}" in env_raw
+                else env_raw
+            )
+        else:
+            base = _DEFAULT_MINIMAL_SYSTEM_PROMPT.format(
+                tenant_name=name,
+                flow_label=flow_label,
+            )
 
     parts = [base]
     block = (catalog_block or "").strip()

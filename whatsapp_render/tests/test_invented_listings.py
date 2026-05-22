@@ -4,7 +4,7 @@ from app.capture_flow import append_user_flow_message
 from app.catalog import load_properties_for_catalog_path
 from app.catalog_search import select_listing_candidates
 from app.catalog_search import user_declined_zone_preference
-from app.search_profile import user_search_profile_ready
+from app.search_profile import mark_intake_answered, mark_intake_prompt_sent, user_search_profile_ready
 from app.listing_delivery import strip_invented_listings, ensure_listado_from_candidates
 
 SALE_CSV = "data/tenants/inmobiliaria_cowork.csv"
@@ -16,10 +16,22 @@ def test_zonas_preferidas_counts_as_any_zone() -> None:
 
 
 def test_profile_ready_casa_alquiler_sin_zona() -> None:
-    capture = append_user_flow_message(
-        {}, "alquiler", "busco casa 2 o 3 dormitorios en alquiler"
+    capture = mark_intake_answered(
+        mark_intake_prompt_sent(
+            append_user_flow_message(
+                {}, "alquiler", "busco casa 2 o 3 dormitorios en alquiler"
+            )
+        ),
+        "busco casa 2 o 3 dormitorios sin preferencia de zona",
+        criteria_llm={
+            "property_types": ["casa"],
+            "min_bedrooms": 2,
+            "any_zone": True,
+            "zone_tokens": [],
+            "max_price_usd": None,
+            "notes": "",
+        },
     )
-    capture["intake_step"] = 3
     assert user_search_profile_ready(
         "quiero ver ideas, no tengo zonas preferidas",
         "alquiler",

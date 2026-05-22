@@ -551,6 +551,8 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             flow_path=flow_path,
             user_text=user_text,
             flow_just_switched=flow_just_switched,
+            wa_id=wa_id,
+            contact_name=contact_name,
         )
 
         clean_answer = turn_result.clean_answer

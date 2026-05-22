@@ -32,6 +32,8 @@ async def process_inbound_message(
     flow_path: str,
     user_text: str,
     flow_just_switched: bool,
+    wa_id: str = "",
+    contact_name: str | None = None,
 ) -> InboundTurnResult:
     result = await handle_turn(
         tenant_name=ctx.name or "la inmobiliaria",
@@ -43,6 +45,9 @@ async def process_inbound_message(
         user_text=user_text,
         session_flow_path=session.flow_path,
         flow_just_switched=flow_just_switched,
+        phone_number_id=ctx.phone_number_id,
+        wa_id=wa_id,
+        contact_name=contact_name,
     )
 
     logger.info(
@@ -62,6 +67,6 @@ async def process_inbound_message(
         candidate_ids=result.candidate_ids,
         catalog_path_used=result.catalog_path,
         capture_data=result.capture_data,
-        has_waitlist_tag=False,
+        has_waitlist_tag=result.phase == "waitlist",
         bot_paused=result.bot_paused,
     )
