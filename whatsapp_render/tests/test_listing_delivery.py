@@ -9,6 +9,7 @@ from app.listing_delivery import (
     consolidate_history_text,
     deliver_bot_response,
     parse_listado_tag,
+    strip_listado_tags,
 )
 from app.meta_client import is_public_https_image_url
 
@@ -31,6 +32,45 @@ def test_parse_listado_tag_splits_intro_ids_closing() -> None:
 
 def test_parse_listado_tag_none_without_tag() -> None:
     assert parse_listado_tag("Solo texto sin tag") is None
+
+
+def test_strip_listado_tags() -> None:
+    text = "Intro\n\n[LISTADO:1,8,9]\n\n¿Cuál te interesa?"
+    assert "[LISTADO:" not in strip_listado_tags(text)
+    assert "Intro" in strip_listado_tags(text)
+
+
+def test_listado_skips_detail_delivery() -> None:
+    msg = "[LISTADO:4,2]\n\n¿Cuál te llama más la atención?"
+
+    async def _run() -> None:
+        with (
+            patch(
+                "app.listing_delivery.try_deliver_single_property_visual",
+                new_callable=AsyncMock,
+            ) as mock_detail,
+            patch(
+                "app.listing_delivery.send_whatsapp_text_message",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.listing_delivery.send_whatsapp_image_message",
+                new_callable=AsyncMock,
+            ) as mock_image,
+        ):
+            await deliver_bot_response(
+                access_token="tok",
+                phone_number_id="pnid",
+                to_wa_id="54911",
+                message=msg,
+                catalog_csv_path=TENANT_RENT,
+                current_user_text="cualquier zona, 2 dormitorios",
+                flow_path="alquiler",
+            )
+            mock_detail.assert_not_awaited()
+            assert mock_image.await_count >= 1
+
+    asyncio.run(_run())
 
 
 def test_get_properties_by_ids_preserves_order() -> None:

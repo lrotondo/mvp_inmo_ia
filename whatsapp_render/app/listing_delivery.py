@@ -89,6 +89,12 @@ def suppress_premature_catalog_outbound(
     return cleaned or body
 
 
+def strip_listado_tags(text: str) -> str:
+    """Quita `[LISTADO:ids]` del texto visible al cliente."""
+    cleaned = _LISTADO_TAG_RE.sub("", text or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
 def parse_listado_tag(text: str) -> ParsedListado | None:
     """Extrae intro, IDs y cierre alrededor de [LISTADO:id1,id2,...]."""
     body = (text or "").strip()
@@ -170,22 +176,26 @@ async def deliver_bot_response(
         flow_path=flow_path,
     )
 
-    visual_sent = await try_deliver_single_property_visual(
-        access_token=access_token,
-        phone_number_id=phone_number_id,
-        to_wa_id=to_wa_id,
-        message=body,
-        catalog_csv_path=catalog_csv_path,
-        current_user_text=current_user_text,
-        flow_path=flow_path,
-        history=history,
-        catalog_sale_path=catalog_sale_path,
-        catalog_rent_path=catalog_rent_path,
-        property_ref=property_ref,
-        graph_version=graph_version,
-    )
-    if visual_sent is not None:
-        return visual_sent
+    parsed_listado = parse_listado_tag(body)
+
+    # Listado multi-opción tiene prioridad; no usar envío de detalle (1 foto + tag en caption).
+    if parsed_listado is None:
+        visual_sent = await try_deliver_single_property_visual(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to_wa_id=to_wa_id,
+            message=body,
+            catalog_csv_path=catalog_csv_path,
+            current_user_text=current_user_text,
+            flow_path=flow_path,
+            history=history,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            property_ref=property_ref,
+            graph_version=graph_version,
+        )
+        if visual_sent is not None:
+            return strip_listado_tags(visual_sent)
 
     if not listing_image_delivery_enabled():
         await send_whatsapp_text_message(
@@ -197,7 +207,7 @@ async def deliver_bot_response(
         )
         return body
 
-    parsed = parse_listado_tag(body)
+    parsed = parsed_listado
     if parsed is None:
         await send_whatsapp_text_message(
             access_token=access_token,
@@ -219,7 +229,7 @@ async def deliver_bot_response(
             parsed.property_ids,
             catalog_csv_path,
         )
-        fallback = parsed.text_without_tag or body
+        fallback = strip_listado_tags(parsed.text_without_tag or body)
         await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
@@ -238,7 +248,7 @@ async def deliver_bot_response(
 
     if not any(url for _, _, url in sendable):
         logger.info("listado_sin_imagenes_https ids=%s; fallback texto", parsed.property_ids)
-        fallback = parsed.text_without_tag or body
+        fallback = strip_listado_tags(parsed.text_without_tag or body)
         await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
@@ -248,12 +258,15 @@ async def deliver_bot_response(
         )
         return fallback
 
-    if parsed.intro.strip():
+    intro_text = _strip_catalog_essay_lines(strip_listado_tags(parsed.intro))
+    closing_text = _strip_catalog_essay_lines(strip_listado_tags(parsed.closing))
+
+    if intro_text:
         await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
-            message=parsed.intro.strip(),
+            message=intro_text,
             graph_version=graph_version,
         )
 
@@ -296,19 +309,19 @@ async def deliver_bot_response(
             )
             history_items.append(fallback_item)
 
-    if parsed.closing.strip():
+    if closing_text:
         await send_whatsapp_text_message(
             access_token=access_token,
             phone_number_id=phone_number_id,
             to_wa_id=to_wa_id,
-            message=parsed.closing.strip(),
+            message=closing_text,
             graph_version=graph_version,
         )
 
     consolidated = consolidate_history_text(
-        parsed.intro,
+        intro_text,
         history_items,
-        parsed.closing,
+        closing_text,
     )
     logger.info(
         "listado_multi_imagen enviado items=%s ids=%s",

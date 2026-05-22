@@ -146,6 +146,8 @@ def should_deliver_property_detail_ficha(
     path = (flow_path or "").strip().lower()
     if path in ("nuevo", "captacion") or row is None:
         return False
+    if _LISTADO_TAG_RE.search(outbound_message or ""):
+        return False
     if (property_ref or "").strip():
         if path in ("compra", "alquiler") and not user_search_profile_ready(
             history or [],
@@ -444,6 +446,8 @@ def _split_detail_intro(body: str) -> str:
     kept: list[str] = []
     for line in lines:
         stripped = line.strip()
+        if _LISTADO_TAG_RE.search(stripped):
+            continue
         if _GALERIA_LINK_RE.search(stripped) or _VIDEO_LINK_RE.search(stripped):
             break
         if _MEDIA_INTRO_RE.search(stripped):
