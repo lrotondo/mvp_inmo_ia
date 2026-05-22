@@ -297,6 +297,7 @@ async def deliver_bot_response(
     catalog_sale_path: str | None = None,
     catalog_rent_path: str | None = None,
     property_ref: str = "",
+    capture_data: dict[str, Any] | None = None,
 ) -> str:
     """
     Envía la respuesta al cliente. Listados con [LISTADO:ids] → intro + imágenes + cierre.
@@ -328,6 +329,7 @@ async def deliver_bot_response(
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
             property_ref=property_ref,
+            capture_data=capture_data,
             graph_version=graph_version,
         )
         if visual_sent is not None:
@@ -347,6 +349,7 @@ async def deliver_bot_response(
             catalog_sale_path=catalog_sale_path,
             catalog_rent_path=catalog_rent_path,
             property_ref=property_ref,
+            capture_data=capture_data,
             graph_version=graph_version,
         )
         if visual_sent is not None:
@@ -478,6 +481,9 @@ async def deliver_bot_response(
         history_items,
         closing_text,
     )
+    if parsed.property_ids:
+        tag = f"[LISTADO:{','.join(parsed.property_ids)}]"
+        consolidated = f"{consolidated}\n\n{tag}".strip()
     logger.info(
         "listado_multi_imagen enviado items=%s ids=%s",
         len(history_items),

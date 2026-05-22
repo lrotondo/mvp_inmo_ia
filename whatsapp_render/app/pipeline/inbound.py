@@ -12,6 +12,11 @@ from app.flow_triggers import (
     parse_flow_alerts,
     resolve_flow_alerts,
 )
+from app.listing_context import (
+    load_last_listing_rows,
+    merge_last_listing_into_capture,
+    property_ref_from_listing_choice,
+)
 from app.property_matching import extract_property_ref
 from app.listing_delivery import (
     ensure_listado_from_candidates,
@@ -77,6 +82,15 @@ async def process_inbound_message(
     property_ref = plan.property_ref
     if interest_classification and interest_classification.property_ref.strip():
         property_ref = interest_classification.property_ref.strip()
+
+    listing_rows = load_last_listing_rows(
+        plan.catalog_path_used, session.capture_data
+    )
+    if plan.kind == TurnKind.DETAIL and listing_rows:
+        choice_ref = property_ref_from_listing_choice(user_text, listing_rows)
+        if choice_ref.strip():
+            property_ref = choice_ref.strip()
+
     if not property_ref:
         property_ref = extract_property_ref(
             "",
@@ -111,6 +125,18 @@ async def process_inbound_message(
             flow_path=flow_path,
         )
 
+    capture_data: dict[str, Any] | None = None
+    if plan.profile and flow_path in ("compra", "alquiler"):
+        capture_data = session_capture_with_profile(session, plan.profile, flow_path)
+    if plan.kind == TurnKind.LISTING and plan.candidate_ids:
+        base = capture_data if capture_data is not None else dict(session.capture_data)
+        capture_data = merge_last_listing_into_capture(
+            base,
+            property_ids=plan.candidate_ids,
+            branch=flow_path,
+            catalog_path=plan.catalog_path_used,
+        )
+
     clean_answer = enrich_detail_media_from_catalog(
         clean_answer,
         catalog_csv_path=plan.catalog_path_used,
@@ -120,11 +146,9 @@ async def process_inbound_message(
         history=history,
         catalog_sale_path=ctx.catalog_csv_path,
         catalog_rent_path=ctx.catalog_rent_csv_path,
+        capture_data=capture_data or session.capture_data,
     )
 
-    capture_data: dict[str, Any] | None = None
-    if plan.profile and flow_path in ("compra", "alquiler"):
-        capture_data = session_capture_with_profile(session, plan.profile, flow_path)
 
     logger.info(
         "turn_done kind=%s profile_complete=%s candidate_ids=%s path=%r",

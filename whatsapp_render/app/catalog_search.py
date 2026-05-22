@@ -87,13 +87,11 @@ def parse_bedrooms_from_row(row: dict[str, Any]) -> int | None:
 
 
 def _parse_min_bedrooms(blob: str) -> int:
-    range_match = re.search(
-        r"(\d+)\s*(?:o|u|ó|-|a|y)\s*(\d+)\s*dormitorios?",
-        blob,
-        re.I,
-    )
-    if range_match:
-        return min(int(range_match.group(1)), int(range_match.group(2)))
+    from app.bedroom_intake import parse_bedroom_count
+
+    count = parse_bedroom_count(blob)
+    if count > 0:
+        return count
 
     values: list[int] = []
     for match in _USER_MIN_BEDS_RE.finditer(blob):

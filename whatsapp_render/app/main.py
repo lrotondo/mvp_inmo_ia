@@ -568,6 +568,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 catalog_sale_path=ctx.catalog_csv_path,
                 catalog_rent_path=ctx.catalog_rent_csv_path,
                 property_ref=property_ref,
+                capture_data=turn_result.capture_data or session.capture_data,
             )
         except MetaSendError as exc:
             logger.error(

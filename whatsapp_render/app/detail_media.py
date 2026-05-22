@@ -82,6 +82,7 @@ _PROPERTY_INTEREST_RE = re.compile(
     r"\b("
     r"me\s+(?:gusta|interesa|cierra|convence)|"
     r"(?:la|el)\s+(?:opci[oó]n|de)\s*\d+|opci[oó]n\s*\d+|"
+    r"(?:la|el)\s+duplex|(?:la|el)\s+d[uú]plex|el\s+duplex|el\s+d[uú]plex|"
     r"esa\s+(?:me\s+)?(?:gusta|interesa)|"
     r"excelente\s+elecci[oó]n|buena\s+elecci[oó]n|"
     r"esa\s+propiedad|esta\s+propiedad|"
@@ -262,8 +263,22 @@ def resolve_detail_property_row(
     flow_path: str,
     catalog_sale_path: str | None,
     catalog_rent_path: str | None,
+    capture_data: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Resuelve fila del catálogo para enviar ficha + media."""
+    from app.listing_context import (
+        load_last_listing_rows,
+        resolve_listing_choice_row,
+    )
+
+    listado_rows = load_last_listing_rows(catalog_csv_path, capture_data)
+    if not listado_rows:
+        listado_rows = _rows_from_recent_listado(history, catalog_csv_path)
+
+    choice_row = resolve_listing_choice_row(current_user_text, listado_rows)
+    if choice_row is not None:
+        return choice_row
+
     ref = property_ref_for_detail_enrich(
         current_user_text=current_user_text,
         outbound_message=outbound_message,
@@ -273,6 +288,8 @@ def resolve_detail_property_row(
         catalog_rent_path=catalog_rent_path,
         fallback_ref=property_ref,
         catalog_csv_path=catalog_csv_path,
+        capture_data=capture_data,
+        listing_rows=listado_rows,
     )
     if not ref and (property_ref or "").strip():
         ref = property_ref.strip()
@@ -280,21 +297,21 @@ def resolve_detail_property_row(
     row: dict[str, Any] | None = None
     if ref:
         row = get_property_row_by_ref(catalog_csv_path, ref)
+        if row is None and listado_rows:
+            ref_id = ref.strip().lower()
+            for candidate in listado_rows:
+                if str(candidate.get("ID", "")).strip().lower() == ref_id:
+                    row = candidate
+                    break
 
-    if row is None:
-        listado_rows = _rows_from_recent_listado(history, catalog_csv_path)
-        for blob in (current_user_text, outbound_message):
-            if not (blob or "").strip():
-                continue
-            row = find_property_row_for_user_text(
-                catalog_csv_path,
-                blob,
-                rows_scope=listado_rows or None,
-            )
-            if row is not None:
-                break
+    if row is None and listado_rows:
+        row = find_property_row_for_user_text(
+            catalog_csv_path,
+            current_user_text,
+            rows_scope=listado_rows,
+        )
 
-    if row is None and history:
+    if row is None and history and not user_showed_property_interest(current_user_text):
         for turn in reversed(history or []):
             if turn.role != "user":
                 continue
@@ -340,30 +357,53 @@ def property_ref_for_detail_enrich(
     catalog_rent_path: str | None,
     fallback_ref: str = "",
     catalog_csv_path: str | None = None,
+    capture_data: dict[str, Any] | None = None,
+    listing_rows: list[dict[str, Any]] | None = None,
 ) -> str:
     """Referencia desde mensaje del usuario (prioridad), historial o fallback."""
-    ref_user = extract_property_ref(
-        "",
-        flow_path=flow_path,
-        catalog_sale_path=catalog_sale_path,
-        catalog_rent_path=catalog_rent_path,
-        history=[],
-        current_user_text=current_user_text,
-        user_only=True,
+    from app.listing_context import (
+        load_last_listing_rows,
+        property_ref_from_listing_choice,
+        property_ref_from_listing_option_number,
     )
-    if ref_user.strip():
-        return ref_user.strip()
 
-    opt_ref = _property_ref_from_option_number(current_user_text, catalog_csv_path)
-    if opt_ref:
-        return opt_ref
+    scoped_rows = listing_rows
+    if scoped_rows is None:
+        scoped_rows = load_last_listing_rows(catalog_csv_path, capture_data)
+
+    if scoped_rows:
+        ref_listing = property_ref_from_listing_choice(
+            current_user_text, scoped_rows
+        )
+        if ref_listing.strip():
+            return ref_listing.strip()
+
+        opt_listing = property_ref_from_listing_option_number(
+            current_user_text, scoped_rows
+        )
+        if opt_listing.strip():
+            return opt_listing.strip()
+
+    user_interest = user_showed_property_interest(current_user_text)
+
+    if not user_interest:
+        ref_user = extract_property_ref(
+            "",
+            flow_path=flow_path,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            history=[],
+            current_user_text=current_user_text,
+            user_only=True,
+        )
+        if ref_user.strip():
+            return ref_user.strip()
 
     if (fallback_ref or "").strip():
         return fallback_ref.strip()
 
-    if (outbound_message or "").strip() and (
+    if not user_interest and (outbound_message or "").strip() and (
         bot_promises_visual_material(outbound_message)
-        or user_showed_property_interest(current_user_text)
     ):
         ref_bot = extract_property_ref(
             "",
@@ -377,9 +417,12 @@ def property_ref_for_detail_enrich(
         if ref_bot.strip():
             return ref_bot.strip()
 
-    opt_out = _property_ref_from_option_number(outbound_message, catalog_csv_path)
-    if opt_out:
-        return opt_out
+    if not user_interest:
+        opt_out = _property_ref_from_option_number(
+            outbound_message, catalog_csv_path
+        )
+        if opt_out:
+            return opt_out
 
     active_context = (
         user_requests_property_detail(current_user_text)
@@ -503,6 +546,7 @@ def enrich_detail_media_from_catalog(
     history: list | None = None,
     catalog_sale_path: str | None = None,
     catalog_rent_path: str | None = None,
+    capture_data: dict[str, Any] | None = None,
 ) -> str:
     """Detalle / elección: ficha con características + links galería/video."""
     body = (message or "").strip()
@@ -529,6 +573,7 @@ def enrich_detail_media_from_catalog(
         catalog_rent_path=catalog_rent_path,
         fallback_ref=property_ref,
         catalog_csv_path=catalog_csv_path,
+        capture_data=capture_data,
     )
     if not ref:
         logger.warning(
@@ -546,6 +591,7 @@ def enrich_detail_media_from_catalog(
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
+        capture_data=capture_data,
     )
     if row is None:
         row = get_property_row_by_ref(catalog_csv_path, ref)
@@ -635,6 +681,7 @@ async def try_deliver_single_property_visual(
     catalog_rent_path: str | None,
     property_ref: str = "",
     graph_version: str | None = None,
+    capture_data: dict[str, Any] | None = None,
 ) -> str | None:
     """
     Envía foto + texto (galería/video) cuando hay elección o promesa de material visual.
@@ -651,6 +698,7 @@ async def try_deliver_single_property_visual(
         flow_path=flow_path,
         catalog_sale_path=catalog_sale_path,
         catalog_rent_path=catalog_rent_path,
+        capture_data=capture_data,
     )
 
     if not should_deliver_property_detail_ficha(

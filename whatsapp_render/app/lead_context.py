@@ -132,6 +132,7 @@ _ZONE_SIGNAL_RE = re.compile(
 
 _BEDROOM_SIGNAL_RE = re.compile(
     r"\b("
+    r"\d+\s*(?:ó|o|or|y|a|-)\s*\d+\b|"
     r"\d+\s*(?:ó|o|or|y)\s*m[aá]s\s*dormitorios?|"
     r"m[aá]s\s+de\s+\d+\s*dorm(?:itorios?)?|"
     r"\d+\s*\+\s*dorm(?:itorios?)?|"

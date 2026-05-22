@@ -195,6 +195,22 @@ def _looks_like_property_list(text: str) -> bool:
     )
 
 
+async def build_detail_outbound(
+    user_text: str,
+    *,
+    listing_rows: list,
+) -> str:
+    """Intro corta de detalle; la ficha la arma el backend."""
+    from app.listing_context import resolve_listing_choice_row
+
+    row = resolve_listing_choice_row(user_text, listing_rows)
+    if row is not None:
+        titulo = str(row.get("Titulo", "")).strip()
+        if titulo:
+            return f"¡Excelente elección! Te paso la ficha de *{titulo}* 👇"
+    return "¡Excelente elección! Te paso la ficha con todos los detalles 👇"
+
+
 async def generate_turn_reply(
     ctx: TurnContext,
     history: list[HistoryTurn],
@@ -206,6 +222,12 @@ async def generate_turn_reply(
 
     if plan.kind == TurnKind.INTAKE and plan.profile:
         return build_intake_outbound(plan.profile)
+
+    if plan.kind == TurnKind.DETAIL:
+        from app.listing_context import load_last_listing_rows
+
+        rows = load_last_listing_rows(plan.catalog_path_used, None)
+        return await build_detail_outbound(user_text, listing_rows=rows)
 
     catalog_block = ""
     if plan.kind not in (TurnKind.LISTING, TurnKind.INTAKE):

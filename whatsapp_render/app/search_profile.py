@@ -9,6 +9,7 @@ from app.catalog_search import (
     parse_search_criteria,
 )
 from app.conversation import HistoryTurn
+from app.bedroom_intake import bedroom_signal_in_text, parse_bedroom_count
 from app.catalog_search import _parse_min_bedrooms
 from app.lead_context import (
     _BEDROOM_SIGNAL_RE,
@@ -131,10 +132,19 @@ def build_search_profile(
     if criteria.property_type in ("casa", "departamento"):
         property_type = criteria.property_type  # type: ignore[assignment]
 
-    min_beds = criteria.min_bedrooms or _parse_min_bedrooms(blob)
+    current_only = (current_user_text or "").strip()
+    min_beds = (
+        criteria.min_bedrooms
+        or _parse_min_bedrooms(blob)
+        or parse_bedroom_count(current_only)
+    )
     any_zone = criteria.any_zone or user_declined_zone_preference(blob)
     has_zone = any_zone or bool(criteria.zone_tokens)
-    has_beds = min_beds > 0 or bool(_BEDROOM_SIGNAL_RE.search(blob))
+    has_beds = (
+        min_beds > 0
+        or bool(_BEDROOM_SIGNAL_RE.search(blob))
+        or bedroom_signal_in_text(current_only)
+    )
 
     missing: list[str] = []
     order = _INTAKE_ORDER_COMPRA if branch == "compra" else _INTAKE_ORDER_ALQUILER
