@@ -62,6 +62,24 @@ def test_strip_invented_listings_removes_fake_zones() -> None:
     assert "¿Te interesa" in out
 
 
+def test_filter_departamento_excludes_pure_casas() -> None:
+    rows = load_properties_for_catalog_path(SALE_CSV)
+    blob = "cualquier zona, departamento, 2 dormitorios, usd 200000"
+    criteria = parse_search_criteria(blob, branch="compra")
+    assert criteria.property_type == "departamento"
+    filtered = filter_catalog_rows(rows, criteria, "compra")
+    for row in filtered[:5]:
+        kind_tipo = str(row.get("Tipo", "")).lower()
+        assert "departamento" in kind_tipo or "duplex" in kind_tipo or kind_tipo != "casa"
+
+
+def test_duplex_in_blob_maps_to_departamento() -> None:
+    from app.catalog_search import parse_property_type_from_blob
+
+    assert parse_property_type_from_blob("busco un duplex en alquiler") == "departamento"
+    assert parse_property_type_from_blob("ph en centro") == "departamento"
+
+
 def test_ensure_listado_injects_backend_ids() -> None:
     msg = (
         "¡Perfecto, vamos encaminados!\n\n"

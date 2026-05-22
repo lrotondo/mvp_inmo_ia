@@ -256,14 +256,25 @@ def user_has_budget_usd(user_messages_text: str) -> bool:
     return bool(_BUDGET_USD_RE.search(user_messages_text))
 
 
+def user_property_type_label(user_messages_text: str) -> str | None:
+    """«casa» o «departamento» si el cliente lo indicó (duplex/ph → departamento)."""
+    from app.catalog_search import parse_property_type_from_blob
+
+    return parse_property_type_from_blob(user_messages_text)
+
+
+def user_has_property_type(user_messages_text: str) -> bool:
+    return user_property_type_label(user_messages_text) is not None
+
+
 def user_search_profile_ready(
     history: list[HistoryTurn],
     current_user_text: str,
     flow_path: str,
 ) -> bool:
     """
-    True si el cliente ya indicó zona (o «cualquier zona») y cantidad de dormitorios/ambientes.
-    En compra también requiere presupuesto en USD.
+    True si el cliente indicó tipo (casa/departamento), zona (o sin preferencia),
+    dormitorios/ambientes y, en compra, presupuesto USD.
     Puerta para listados y material visual: evita mostrar stock antes de indagar.
     """
     path = (flow_path or "").strip().lower()
@@ -274,13 +285,14 @@ def user_search_profile_ready(
     if not blob.strip():
         return False
 
+    has_type = user_has_property_type(blob)
     has_zone = user_declined_zone_preference(blob) or bool(
         _ZONE_SIGNAL_RE.search(blob)
     )
     has_beds = bool(_BEDROOM_SIGNAL_RE.search(blob))
     if path == "compra":
-        return has_zone and has_beds and user_has_budget_usd(blob)
-    return has_zone and has_beds
+        return has_type and has_zone and has_beds and user_has_budget_usd(blob)
+    return has_type and has_zone and has_beds
 
 
 _STREET_AL_RE = re.compile(r"\s+al\s+", re.I)

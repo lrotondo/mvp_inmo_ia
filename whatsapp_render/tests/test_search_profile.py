@@ -24,15 +24,28 @@ def test_profile_ready_with_zone_and_beds() -> None:
     history: list[HistoryTurn] = []
     assert user_search_profile_ready(
         history,
+        "busco departamento en el centro, 2 dormitorios",
+        "alquiler",
+    )
+
+
+def test_profile_not_ready_without_property_type() -> None:
+    assert not user_search_profile_ready(
+        [],
         "busco en el centro, 2 dormitorios",
         "alquiler",
+    )
+    assert not user_search_profile_ready(
+        [],
+        "cualquier zona, 2 dormitorios, presupuesto 150000 usd",
+        "compra",
     )
 
 
 def test_profile_ready_any_zone_declared() -> None:
     assert user_search_profile_ready(
         [],
-        "cualquier zona, monoambiente, presupuesto 150000 usd",
+        "cualquier zona, casa, monoambiente, presupuesto 150000 usd",
         "compra",
     )
 

@@ -582,16 +582,17 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         elif flow_path in ("compra", "alquiler") and not profile_ready:
             if flow_path == "compra":
                 catalog_block = (
-                    "(Catálogo oculto hasta zona o «sin preferencia de zona», "
-                    "cantidad de dormitorios/ambientes y presupuesto en USD. "
-                    "No menciones propiedades, direcciones, precios ni uses "
-                    "[LISTADO:ids]. Solo preguntá lo que falta.)"
+                    "(Catálogo oculto hasta: tipo de propiedad (casa o departamento), "
+                    "zona o «sin preferencia de zona», dormitorios/ambientes y "
+                    "presupuesto en USD. No menciones propiedades, direcciones, precios "
+                    "ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
                 )
             else:
                 catalog_block = (
-                    "(Catálogo oculto hasta que el cliente indique zona/barrio y "
-                    "cantidad de dormitorios o ambientes. No menciones propiedades, "
-                    "direcciones, precios ni uses [LISTADO:ids]. Solo preguntá lo que falta.)"
+                    "(Catálogo oculto hasta: tipo de propiedad (casa o departamento), "
+                    "zona/barrio y cantidad de dormitorios o ambientes. "
+                    "No menciones propiedades, direcciones, precios ni uses "
+                    "[LISTADO:ids]. Solo preguntá lo que falta.)"
                 )
             row_count = 0
             candidate_ids = []

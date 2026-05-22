@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from app.catalog_profiles import format_row_compact
 from app.lead_context import user_declined_zone_preference
+
+logger = logging.getLogger(__name__)
 
 _MAX_LISTING_ITEMS = 3
 
@@ -18,14 +21,6 @@ _BEDROOM_ROW_RE = re.compile(
     re.I,
 )
 
-_TYPE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "casa": ("casa",),
-    "departamento": ("departamento", "depto"),
-    "duplex": ("duplex", "dúplex"),
-    "ph": ("ph",),
-    "lote": ("lote", "terreno"),
-    "local": ("local",),
-}
 
 _USER_TYPE_RE = re.compile(
     r"\b(casa|departamento|depto|duplex|d[uú]plex|ph|lote|terreno|local)\b",
@@ -113,18 +108,42 @@ def _parse_max_budget_usd(blob: str) -> int | None:
     return best
 
 
-def _parse_property_type(blob: str) -> str | None:
+def parse_property_type_from_blob(blob: str) -> str | None:
+    """
+    Tipo de búsqueda para listados: solo «casa» o «departamento».
+    duplex / PH / depto se normalizan a departamento.
+    """
     match = _USER_TYPE_RE.search(blob)
     if not match:
         return None
     word = match.group(1).lower()
-    if word in ("depto", "departamento"):
+    if word in ("depto", "departamento", "duplex", "dúplex", "ph"):
         return "departamento"
-    if word in ("duplex", "dúplex"):
-        return "duplex"
-    if word in ("lote", "terreno"):
-        return "lote"
-    return word
+    if word == "casa":
+        return "casa"
+    return None
+
+
+def _classify_row_property_kind(row: dict[str, Any]) -> str | None:
+    """Clasifica fila del catálogo como casa o departamento (duplex/ph → departamento)."""
+    tipo = str(row.get("Tipo", "")).lower().strip()
+    titulo = str(row.get("Titulo", "")).lower()
+    caract = str(row.get("Caracteristicas", "")).lower()
+
+    if tipo:
+        if any(k in tipo for k in ("departamento", "depto", "duplex", "dúplex")) or tipo == "ph":
+            return "departamento"
+        if "casa" in tipo:
+            return "casa"
+        if "lote" in tipo or "terreno" in tipo or "local" in tipo or "campo" in tipo:
+            return None
+
+    combined = f"{titulo} {caract}"
+    if any(k in combined for k in ("departamento", " depto", "duplex", "dúplex")):
+        return "departamento"
+    if "casa" in combined and "departamento" not in titulo[:30]:
+        return "casa"
+    return None
 
 
 def _parse_zone_tokens(blob: str) -> tuple[str, ...]:
@@ -142,7 +161,7 @@ def parse_search_criteria(blob: str, *, branch: str) -> SearchCriteria:
     path = (branch or "").strip().lower()
     max_price = _parse_max_budget_usd(text) if path == "compra" else None
     return SearchCriteria(
-        property_type=_parse_property_type(text),
+        property_type=parse_property_type_from_blob(text),
         min_bedrooms=_parse_min_bedrooms(text),
         max_price_usd=max_price,
         zone_tokens=() if any_zone else _parse_zone_tokens(text),
@@ -152,13 +171,11 @@ def parse_search_criteria(blob: str, *, branch: str) -> SearchCriteria:
 
 def _row_matches_type(row: dict[str, Any], property_type: str | None) -> bool:
     if not property_type:
-        return True
-    keywords = _TYPE_KEYWORDS.get(property_type, (property_type,))
-    tipo = str(row.get("Tipo", "")).lower()
-    caract = str(row.get("Caracteristicas", "")).lower()
-    titulo = str(row.get("Titulo", "")).lower()
-    blob = f"{tipo} {caract} {titulo}"
-    return any(kw in blob for kw in keywords)
+        return False
+    kind = _classify_row_property_kind(row)
+    if kind is None:
+        return False
+    return kind == property_type
 
 
 def _row_matches_zone(row: dict[str, Any], criteria: SearchCriteria) -> bool:
@@ -198,6 +215,10 @@ def filter_catalog_rows(
     criteria: SearchCriteria,
     branch: str,
 ) -> list[dict[str, Any]]:
+    if not criteria.property_type:
+        logger.warning("filter_catalog_rows sin property_type; sin candidatos")
+        return []
+
     path = (branch or "").strip().lower()
     scored: list[tuple[float, dict[str, Any]]] = []
     for row in rows:
