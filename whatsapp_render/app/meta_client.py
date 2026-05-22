@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+from dataclasses import dataclass
 
 import httpx
 
@@ -12,26 +14,58 @@ _URL_IN_TEXT = re.compile(r"https?://", re.I)
 
 logger = logging.getLogger(__name__)
 
-
-def _graph_messages_url(phone_number_id: str, graph_version: str | None) -> str:
-    version = (graph_version or os.environ.get("META_GRAPH_VERSION", "v22.0")).strip() or "v22.0"
-    pid = phone_number_id.strip()
-    if not pid:
-        raise RuntimeError("phone_number_id vacio")
-    return f"https://graph.facebook.com/{version}/{pid}/messages"
+_META_RETRY_ATTEMPTS = 4
+_META_RETRY_BASE_SECONDS = 1.0
+_TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+_TRANSIENT_ERROR_CODES = frozenset({1, 2, 4, 17, 32, 613})
 
 
-def _token_debug(token: str) -> str:
-    t = token.strip()
-    if not t:
-        return "empty"
-    suffix = t[-4:] if len(t) >= 4 else "****"
-    return f"len={len(t)} suffix=…{suffix}"
+@dataclass(frozen=True)
+class MetaSendError(Exception):
+    """Fallo al enviar mensaje por Graph API (tras reintentos si aplica)."""
+
+    message: str
+    status_code: int | None = None
+    error_code: int | None = None
+    is_transient: bool = False
+    response_body: str = ""
+
+    def __str__(self) -> str:
+        return self.message
 
 
-def is_public_https_image_url(url: str) -> bool:
-    """Alias: imagen directa HTTPS (excluye Instagram/perfiles)."""
-    return is_likely_direct_image_url(url)
+def _parse_meta_error_payload(response: httpx.Response) -> tuple[bool, int | None, str]:
+    try:
+        data = response.json()
+    except Exception:
+        return False, None, ""
+    err = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(err, dict):
+        return False, None, ""
+    code_raw = err.get("code")
+    try:
+        code = int(code_raw) if code_raw is not None else None
+    except (TypeError, ValueError):
+        code = None
+    transient = bool(err.get("is_transient"))
+    if code in _TRANSIENT_ERROR_CODES:
+        transient = True
+    msg = str(err.get("message") or "")
+    return transient, code, msg
+
+
+def _should_retry_meta_send(
+    response: httpx.Response,
+    *,
+    attempt: int,
+    max_attempts: int,
+) -> bool:
+    if attempt >= max_attempts:
+        return False
+    if response.status_code in _TRANSIENT_HTTP_STATUSES:
+        return True
+    transient, _, _ = _parse_meta_error_payload(response)
+    return transient
 
 
 async def _post_whatsapp_payload(
@@ -61,26 +95,85 @@ async def _post_whatsapp_payload(
         _token_debug(token),
     )
 
+    last_response: httpx.Response | None = None
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, headers=headers, json=payload)
+        for attempt in range(1, _META_RETRY_ATTEMPTS + 1):
+            response = await client.post(url, headers=headers, json=payload)
+            last_response = response
+            logger.info(
+                "Meta response %s: status=%s attempt=%s/%s content_length=%s",
+                log_label,
+                response.status_code,
+                attempt,
+                _META_RETRY_ATTEMPTS,
+                response.headers.get("content-length"),
+            )
+            if not response.is_error:
+                logger.info("Meta send OK %s: body=%s", log_label, response.text[:500])
+                return
 
-    logger.info(
-        "Meta response %s: status=%s content_length=%s",
-        log_label,
-        response.status_code,
-        response.headers.get("content-length"),
-    )
+            transient, err_code, err_msg = _parse_meta_error_payload(response)
+            logger.error(
+                "Meta send FAILED %s: status=%s transient=%s code=%s attempt=%s body=%s",
+                log_label,
+                response.status_code,
+                transient,
+                err_code,
+                attempt,
+                response.text[:2000],
+            )
+            if _should_retry_meta_send(
+                response, attempt=attempt, max_attempts=_META_RETRY_ATTEMPTS
+            ):
+                delay = _META_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+                logger.info(
+                    "Meta send retry %s en %.1fs (transient=%s)",
+                    log_label,
+                    delay,
+                    transient,
+                )
+                await asyncio.sleep(delay)
+                continue
 
-    if response.is_error:
-        logger.error(
-            "Meta send FAILED %s: status=%s body=%s",
-            log_label,
-            response.status_code,
-            response.text[:2000],
+            raise MetaSendError(
+                message=err_msg or f"Meta API error HTTP {response.status_code}",
+                status_code=response.status_code,
+                error_code=err_code,
+                is_transient=transient,
+                response_body=response.text[:2000],
+            )
+
+    if last_response is not None:
+        transient, err_code, err_msg = _parse_meta_error_payload(last_response)
+        raise MetaSendError(
+            message=err_msg or "Meta API error",
+            status_code=last_response.status_code,
+            error_code=err_code,
+            is_transient=transient,
+            response_body=last_response.text[:2000],
         )
-        response.raise_for_status()
+    raise MetaSendError(message="Meta API sin respuesta")
 
-    logger.info("Meta send OK %s: body=%s", log_label, response.text[:500])
+
+def _graph_messages_url(phone_number_id: str, graph_version: str | None) -> str:
+    version = (graph_version or os.environ.get("META_GRAPH_VERSION", "v22.0")).strip() or "v22.0"
+    pid = phone_number_id.strip()
+    if not pid:
+        raise RuntimeError("phone_number_id vacio")
+    return f"https://graph.facebook.com/{version}/{pid}/messages"
+
+
+def _token_debug(token: str) -> str:
+    t = token.strip()
+    if not t:
+        return "empty"
+    suffix = t[-4:] if len(t) >= 4 else "****"
+    return f"len={len(t)} suffix=…{suffix}"
+
+
+def is_public_https_image_url(url: str) -> bool:
+    """Alias: imagen directa HTTPS (excluye Instagram/perfiles)."""
+    return is_likely_direct_image_url(url)
 
 
 async def send_whatsapp_text_message(

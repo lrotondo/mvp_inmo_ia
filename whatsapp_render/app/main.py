@@ -28,6 +28,7 @@ from app.meta_auth import (
 )
 from app.leads import try_register_lead
 from app.listing_delivery import deliver_bot_response
+from app.meta_client import MetaSendError
 from app.pipeline.inbound import process_inbound_message
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
 from app.tenant_service import (
@@ -554,19 +555,36 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             turn_result.candidate_ids,
         )
 
-        outbound_for_client = await deliver_bot_response(
-            access_token=ctx.access_token,
-            phone_number_id=ctx.phone_number_id,
-            to_wa_id=wa_id,
-            message=clean_answer,
-            catalog_csv_path=catalog_path_used,
-            current_user_text=user_text,
-            flow_path=flow_path,
-            history=history,
-            catalog_sale_path=ctx.catalog_csv_path,
-            catalog_rent_path=ctx.catalog_rent_csv_path,
-            property_ref=property_ref,
-        )
+        try:
+            outbound_for_client = await deliver_bot_response(
+                access_token=ctx.access_token,
+                phone_number_id=ctx.phone_number_id,
+                to_wa_id=wa_id,
+                message=clean_answer,
+                catalog_csv_path=catalog_path_used,
+                current_user_text=user_text,
+                flow_path=flow_path,
+                history=history,
+                catalog_sale_path=ctx.catalog_csv_path,
+                catalog_rent_path=ctx.catalog_rent_csv_path,
+                property_ref=property_ref,
+            )
+        except MetaSendError as exc:
+            logger.error(
+                "WhatsApp no entregado wa_id=%s transient=%s code=%s status=%s: %s",
+                wa_id,
+                exc.is_transient,
+                exc.error_code,
+                exc.status_code,
+                exc,
+            )
+            outbound_for_client = clean_answer
+        except Exception:
+            logger.exception(
+                "Error enviando respuesta WhatsApp wa_id=%s; webhook OK para evitar reenvío Meta",
+                wa_id,
+            )
+            outbound_for_client = clean_answer
 
         try:
             await register_visit_lead_on_handoff_message(
