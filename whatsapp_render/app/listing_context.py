@@ -64,12 +64,25 @@ _BOT_OPTION_CITE_RE = re.compile(
 
 _REJECT_ALL_LISTING_RE = re.compile(
     r"\b("
+    r"no,?\s*ninguna\b|"
     r"ninguna\s+(?:me\s+)?(?:sirve|convence|cierra|me\s+gusta)|"
     r"ninguna\s+de\s+(?:esas|estas)|"
     r"no\s+me\s+(?:sirve|convence|cierra|gusta)\s+ninguna|"
     r"nada\s+de\s+esto|no\s+cumple|no\s+cumplen|"
     r"no\s+es\s+lo\s+que\s+busco|no\s+encuentro\s+lo\s+que\s+busco|"
-    r"no\s+hay\s+nada\s+para\s+m[ií]"
+    r"no\s+hay\s+nada\s+para\s+m[ií]|"
+    r"\btampoco\b|\bninguna\b"
+    r")\b",
+    re.I,
+)
+_NEW_SEARCH_STRONG_RE = re.compile(
+    r"\b(busquemos|encontremos|empecemos\s+a\s+buscar|quiero\s+buscar)\b",
+    re.I,
+)
+_REQUIREMENTS_HINT_RE = re.compile(
+    r"\b("
+    r"dormitorio|ambiente|pileta|tenis|zona|barrio|presupuesto|"
+    r"usd|metros|m2|mascota|expensa|garage|cochera"
     r")\b",
     re.I,
 )
@@ -561,16 +574,36 @@ def property_types_mentioned_in_text(user_text: str) -> set[str]:
     return found
 
 
-def user_requests_new_search(user_text: str) -> bool:
+def user_requests_new_search(
+    user_text: str,
+    capture_data: dict[str, Any] | None = None,
+) -> bool:
     """
     Nueva búsqueda (ej. busquemos casas en venta): reinicia intake y no reutiliza listado.
     """
+    from app.waitlist_flow import get_waitlist_pending
+
     text = (user_text or "").strip()
     if not text or user_rejects_all_listings(text):
         return False
+    if get_waitlist_pending(capture_data):
+        return False
     if not _NEW_SEARCH_RE.search(text):
         return False
-    return bool(_NEW_SEARCH_TYPE_RE.search(text))
+    if not _NEW_SEARCH_TYPE_RE.search(text):
+        return False
+    if _NEW_SEARCH_STRONG_RE.search(text):
+        return True
+    if _REQUIREMENTS_HINT_RE.search(text):
+        return False
+    return True
+
+
+def user_wants_alternate_listing(user_text: str) -> bool:
+    """Rechazo o pedido de más opciones: re-listado sin reiniciar intake."""
+    return user_rejects_all_listings(user_text) or user_requests_more_listing_only(
+        user_text
+    )
 
 
 def user_requests_fresh_listing(user_text: str) -> bool:

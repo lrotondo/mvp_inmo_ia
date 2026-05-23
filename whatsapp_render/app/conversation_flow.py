@@ -43,6 +43,7 @@ from app.listing_context import (
     user_requests_new_search,
     user_requests_more_photos,
     user_showed_property_selection,
+    user_wants_alternate_listing,
 )
 from app.property_matching import extract_property_ref
 from app.prompts.templates import (
@@ -53,6 +54,7 @@ from app.prompts.templates import (
     build_triage_message,
     build_visit_schedule_question,
     build_waitlist_bundle_question,
+    build_waitlist_consent_question,
     format_visit_confirmation,
 )
 from app.session_state import (
@@ -89,13 +91,17 @@ from app.search_profile import (
 from app.waitlist import register_waitlist_entry, summarize_waitlist_requirements
 from app.waitlist_flow import (
     get_waitlist_answered,
+    get_waitlist_consent_sent,
     get_waitlist_pending,
     get_waitlist_prompt_sent,
     get_waitlist_raw_text,
     mark_waitlist_answered,
+    mark_waitlist_consent_sent,
     mark_waitlist_pending,
     mark_waitlist_prompt_sent,
     reset_waitlist_state,
+    user_affirms_waitlist_consent,
+    waitlist_message_is_substantive,
 )
 from app.visit_intent import (
     conversation_requests_human,
@@ -153,6 +159,7 @@ class Phase(str, Enum):
     GENERAL = "general"
     CAPTACION = "captacion"
     WAITLIST_INTAKE = "waitlist_intake"
+    WAITLIST_CONSENT = "waitlist_consent"
     WAITLIST_CONFIRM = "waitlist_confirm"
     VISIT_INTAKE = "visit_intake"
     VISIT_CONFIRM = "visit_confirm"
@@ -259,7 +266,7 @@ def _wants_visit(flow_path: str, text: str) -> bool:
 def _is_detail_pick(text: str) -> bool:
     """Elección de opción o más fotos (no preguntas sobre características)."""
     t = (text or "").strip()
-    if not t or user_requests_fresh_listing(t):
+    if not t or user_wants_alternate_listing(t):
         return False
     if user_requests_more_photos(t) or user_showed_property_selection(t):
         return True
@@ -287,6 +294,19 @@ def decide_phase(
     if path not in ("compra", "alquiler"):
         return Phase.GENERAL
 
+    if get_waitlist_pending(capture_data):
+        if get_waitlist_answered(capture_data):
+            return Phase.WAITLIST_CONFIRM
+        if get_waitlist_prompt_sent(capture_data):
+            return Phase.WAITLIST_INTAKE
+        if get_waitlist_consent_sent(capture_data):
+            if user_affirms_waitlist_consent(user_text) or waitlist_message_is_substantive(
+                user_text
+            ):
+                return Phase.WAITLIST_INTAKE
+            return Phase.WAITLIST_CONSENT
+        return Phase.WAITLIST_CONSENT
+
     if profile is None or not profile.is_complete:
         return Phase.INTAKE
 
@@ -294,20 +314,14 @@ def decide_phase(
         catalog_csv_path=catalog_path,
         capture_data=capture_data,
     )
-    waitlist_active = get_waitlist_pending(capture_data) or (
-        shown
-        and user_rejects_all_listings(user_text)
-        and not get_waitlist_answered(capture_data)
-    )
-    if waitlist_active:
-        if get_waitlist_answered(capture_data):
-            return Phase.WAITLIST_CONFIRM
-        return Phase.WAITLIST_INTAKE
 
     if get_visit_pending(capture_data):
         if get_visit_answered(capture_data):
             return Phase.VISIT_CONFIRM
         return Phase.VISIT_INTAKE
+
+    if shown and user_wants_alternate_listing(user_text):
+        return Phase.LISTING
 
     if user_requests_fresh_listing(user_text) or not shown:
         return Phase.LISTING
@@ -446,7 +460,9 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     listing_rows: list = []
     if plan.catalog_path:
         listing_rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
-        if listing_rows and not user_requests_new_search(user_text):
+        if listing_rows and not user_requests_new_search(
+            user_text, ctx.capture_data
+        ) and not get_waitlist_pending(ctx.capture_data):
             branch = plan.profile.branch if plan.profile else ctx.flow_path
             catalog_block = build_listing_catalog_block(listing_rows, branch=branch)
             viewed_row = load_last_viewed_property_row(
@@ -539,9 +555,14 @@ async def _resolve_listing_for_plan(
         catalog_csv_path=plan.catalog_path,
         capture_data=ctx.capture_data,
     )
-    more = shown and user_requests_more_listing_only(user_text)
+    more = shown and user_wants_alternate_listing(user_text)
     exclude = get_shown_listing_ids(ctx.capture_data) if more else []
-    mode = "more_options" if more else "initial"
+    if user_rejects_all_listings(user_text) and shown:
+        mode: str = "rejected_options"
+    elif more:
+        mode = "more_options"
+    else:
+        mode = "initial"
 
     pick = await pick_listing_properties(
         rows,
@@ -639,6 +660,9 @@ async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     if plan.phase == Phase.INTAKE:
         return build_intake_bundle_question(ctx.flow_path)
 
+    if plan.phase == Phase.WAITLIST_CONSENT:
+        return build_waitlist_consent_question()
+
     if plan.phase == Phase.WAITLIST_INTAKE:
         return build_waitlist_bundle_question(ctx.flow_path)
 
@@ -694,27 +718,36 @@ async def handle_turn(
         working_capture = reset_visit_state(working_capture)
 
     if flow_path in ("compra", "alquiler") and (user_text or "").strip():
-        if user_requests_new_search(user_text) or user_changes_property_type(
-            user_text,
-            working_capture,
-            flow_path=flow_path,
-        ):
-            working_capture = reset_search_state(working_capture, flow_path=flow_path)
-            logger.info(
-                "search_state_reset flow=%s reason=new_search_or_type_change",
-                flow_path,
-            )
+        intake_collecting = get_intake_prompt_sent(working_capture) and not get_intake_answered(
+            working_capture
+        )
+        if not get_waitlist_pending(working_capture) and not intake_collecting:
+            if user_requests_new_search(
+                user_text, working_capture
+            ) or user_changes_property_type(
+                user_text,
+                working_capture,
+                flow_path=flow_path,
+            ):
+                working_capture = reset_search_state(working_capture, flow_path=flow_path)
+                logger.info(
+                    "search_state_reset flow=%s reason=new_search_or_type_change",
+                    flow_path,
+                )
 
     if flow_path in ("compra", "alquiler"):
         if (
-            listing_already_shown(
-                catalog_csv_path=None,
-                capture_data=working_capture,
+            get_waitlist_pending(working_capture)
+            and get_waitlist_consent_sent(working_capture)
+            and not get_waitlist_prompt_sent(working_capture)
+            and (
+                user_affirms_waitlist_consent(user_text)
+                or waitlist_message_is_substantive(user_text)
             )
-            and user_rejects_all_listings(user_text)
-            and not get_waitlist_pending(working_capture)
         ):
-            working_capture = mark_waitlist_pending(working_capture)
+            working_capture = mark_waitlist_prompt_sent(working_capture)
+            if waitlist_message_is_substantive(user_text):
+                working_capture = mark_waitlist_answered(working_capture, user_text)
 
         if (
             get_waitlist_pending(working_capture)
@@ -722,7 +755,12 @@ async def handle_turn(
             and not get_waitlist_answered(working_capture)
             and (user_text or "").strip()
         ):
-            working_capture = mark_waitlist_answered(working_capture, user_text)
+            if user_affirms_waitlist_consent(user_text) and not waitlist_message_is_substantive(
+                user_text
+            ):
+                pass
+            else:
+                working_capture = mark_waitlist_answered(working_capture, user_text)
 
         if (
             get_visit_pending(working_capture)
@@ -784,16 +822,38 @@ async def handle_turn(
     )
     plan = plan_message(ctx, user_text)
     plan = await _resolve_listing_for_plan(ctx, user_text, plan)
-    text = await build_reply(ctx, user_text, plan)
+
+    if (
+        plan.phase == Phase.LISTING
+        and not plan.candidate_ids
+        and user_wants_alternate_listing(user_text)
+        and listing_already_shown(
+            catalog_csv_path=plan.catalog_path,
+            capture_data=working_capture,
+        )
+    ):
+        working_capture = mark_waitlist_pending(working_capture)
+        working_capture = mark_waitlist_consent_sent(working_capture)
+        plan.phase = Phase.WAITLIST_CONSENT
+        text = build_waitlist_consent_question(catalog_exhausted=True)
+    else:
+        text = await build_reply(ctx, user_text, plan)
 
     out_capture = dict(working_capture)
     if plan.profile and flow_path in ("compra", "alquiler"):
         out_capture = merge_search_profile_into_capture(out_capture, plan.profile)
 
-    skip_property_delivery = plan.phase == Phase.INTAKE
+    skip_property_delivery = plan.phase in (
+        Phase.INTAKE,
+        Phase.WAITLIST_CONSENT,
+        Phase.WAITLIST_INTAKE,
+    )
 
     if plan.phase == Phase.INTAKE:
         out_capture = mark_intake_prompt_sent(out_capture)
+
+    if plan.phase == Phase.WAITLIST_CONSENT:
+        out_capture = mark_waitlist_consent_sent(out_capture)
 
     if plan.phase == Phase.WAITLIST_INTAKE:
         out_capture = mark_waitlist_prompt_sent(out_capture)

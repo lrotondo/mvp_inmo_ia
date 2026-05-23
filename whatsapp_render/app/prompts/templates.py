@@ -163,6 +163,21 @@ WAITLIST_CONFIRMATION_TEXT = (
     "ni bien tengamos propiedades que cumplan con lo que necesitás."
 )
 
+WAITLIST_CATALOG_EXHAUSTED_INTRO = (
+    "Revisé el catálogo y no tengo más opciones distintas para mostrarte.\n\n"
+)
+
+WAITLIST_CONSENT_TEXT = (
+    "¿Te parece si te tomo los datos para buscar propiedades que se ajusten "
+    "a lo que necesitás? Un asesor se comunicará para coordinar."
+)
+
+
+def build_waitlist_consent_question(*, catalog_exhausted: bool = False) -> str:
+    if catalog_exhausted:
+        return WAITLIST_CATALOG_EXHAUSTED_INTRO + WAITLIST_CONSENT_TEXT
+    return WAITLIST_CONSENT_TEXT
+
 
 def build_triage_message(tenant_name: str) -> str:
     name = (tenant_name or "").strip() or "la inmobiliaria"

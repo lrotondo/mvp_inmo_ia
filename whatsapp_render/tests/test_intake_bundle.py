@@ -50,7 +50,7 @@ def test_intake_complete_after_mark_answered() -> None:
     assert profile.property_types == ("departamento",)
 
 
-def test_decide_waitlist_when_rejects_listing() -> None:
+def test_decide_listing_when_rejects_listing() -> None:
     profile = SearchProfile(
         branch="alquiler",
         property_type="departamento",
@@ -68,4 +68,4 @@ def test_decide_waitlist_when_rejects_listing() -> None:
         capture_data=capture,
         catalog_path="data/x.csv",
     )
-    assert phase == Phase.WAITLIST_INTAKE
+    assert phase == Phase.LISTING

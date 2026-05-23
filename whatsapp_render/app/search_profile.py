@@ -137,7 +137,7 @@ def is_intake_complete(
     *,
     current_user_text: str = "",
 ) -> bool:
-    if user_requests_new_search((current_user_text or "").strip()):
+    if user_requests_new_search((current_user_text or "").strip(), capture_data):
         return False
     return get_intake_answered(capture_data)
 

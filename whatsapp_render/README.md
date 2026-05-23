@@ -286,7 +286,7 @@ Lógica en [`app/conversation_flow.py`](app/conversation_flow.py) (fachada: [`ap
 | Intake (`compra`/`alquiler`) | **Una sola pregunta** (tipo, zona, dormitorios, presupuesto en compra); la respuesta libre se parsea con LLM | Sí (extracción) |
 | Listado | LLM elige hasta 3 IDs del catálogo + intro fija + `[LISTADO:ids]` + fotos | Sí (picker) |
 | Más opciones | LLM elige otros IDs excluyendo los ya mostrados | Sí (picker) |
-| Ninguna sirve (waitlist) | 1) Pregunta fija con todos los requisitos en un mensaje; 2) LLM resume → `client_waitlist` → confirmación | Sí (solo en paso 2) |
+| Ninguna sirve (waitlist) | 1) Re-listado con IDs no mostrados; 2) Si no hay más en catálogo → consentimiento; 3) `si` → bundle requisitos; 4) LLM resume → `client_waitlist` → confirmación | Sí (paso 4) |
 | Preguntas sobre opciones ya mostradas | Respuesta con datos compactos de las 3 opciones | DeepSeek (prompt mínimo) |
 | Detalle (`opción N`, fotos, elección) | Intro fija + ficha/media | No |
 | Visita / asesor | 1) Pregunta fija por días y horarios; 2) LLM resume conversación → lead + confirmación al cliente | Sí (paso 2) |
@@ -359,7 +359,7 @@ ORDER BY conversation_at DESC;
 
 ## Lista de espera (`client_waitlist`)
 
-Si el cliente indica que **ninguna opción le sirve** tras ver el listado, el bot primero pide **todos los requisitos en un solo mensaje**; con esa respuesta, el LLM arma el resumen, registra en `client_waitlist` (requiere `DATABASE_URL`) y confirma la lista de espera. El bot sigue atendiendo nuevas consultas. Export CSV:
+Si el cliente indica que **ninguna opción le sirve** tras ver el listado, el bot primero intenta **mostrar otras propiedades del catálogo** (sin repetir IDs ya enviados). Cuando **no quedan más opciones**, pide consentimiento para tomar datos, luego el **bundle de requisitos** en un mensaje; con esa respuesta el LLM arma el resumen, registra en `client_waitlist` (requiere `DATABASE_URL`) y confirma la lista de espera. Aplica a compra y alquiler.
 
 Requiere `WAITLIST_EXPORT_SECRET` y `DATABASE_URL`.
 

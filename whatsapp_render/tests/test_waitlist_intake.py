@@ -46,7 +46,7 @@ def test_reject_does_not_set_raw_text_on_first_turn() -> None:
         capture_data=capture,
         catalog_path="x",
     )
-    assert phase == Phase.WAITLIST_INTAKE
+    assert phase == Phase.WAITLIST_CONSENT
     assert not get_waitlist_answered(capture)
     assert get_waitlist_raw_text(capture) == ""
 

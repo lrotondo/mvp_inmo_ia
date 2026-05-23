@@ -45,7 +45,7 @@ def test_option_number_alone_is_detail_not_general() -> None:
     assert kind == TurnKind.DETAIL
 
 
-def test_reject_all_goes_waitlist_intake() -> None:
+def test_reject_all_goes_listing_for_more_options() -> None:
     capture = {"last_listing": {"ids": ["1", "2", "3"], "catalog_path": "x"}}
     kind = resolve_turn_kind(
         "alquiler",
@@ -54,7 +54,7 @@ def test_reject_all_goes_waitlist_intake() -> None:
         capture_data=capture,
         catalog_path_used="x",
     )
-    assert kind == TurnKind.WAITLIST_INTAKE
+    assert kind == TurnKind.LISTING
 
 
 def test_waitlist_answered_goes_confirm() -> None:

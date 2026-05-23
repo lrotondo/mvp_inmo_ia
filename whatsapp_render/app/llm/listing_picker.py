@@ -19,7 +19,7 @@ _PICK_MAX_TOKENS = 400
 _MAX_ITEMS = 3
 _MAX_CATALOG_ROWS = 80
 
-PickerMode = Literal["initial", "more_options"]
+PickerMode = Literal["initial", "more_options", "rejected_options"]
 
 
 @dataclass(frozen=True)
@@ -80,22 +80,40 @@ def _fallback_pick(
     *,
     branch: str,
     exclude_ids: set[str],
+    relaxed: bool = False,
 ) -> ListingPickResult:
-    pool = [r for r in rows if str(r.get("ID", "")).strip() not in exclude_ids]
+    pool = [
+        r
+        for r in rows
+        if str(r.get("ID", "")).strip() not in exclude_ids and is_property_available(r)
+    ]
+    if relaxed:
+        picked = pool[:_MAX_ITEMS]
+        ids = pick_listing_ids(picked, max_items=_MAX_ITEMS)
+        reason = "" if ids else "No hay más propiedades en catálogo."
+        return ListingPickResult(ids=ids, rows=_rows_for_ids(rows, ids), empty_reason=reason)
+
     criteria = listing_filter_from_profile(profile)
     filtered = filter_catalog_rows_relaxed(pool, criteria, branch)
     picked = filtered[:_MAX_ITEMS]
     ids = pick_listing_ids(picked, max_items=_MAX_ITEMS)
+    if not ids and pool:
+        picked = pool[:_MAX_ITEMS]
+        ids = pick_listing_ids(picked, max_items=_MAX_ITEMS)
     reason = "" if ids else "Sin coincidencias en catálogo (fallback)."
     return ListingPickResult(ids=ids, rows=_rows_for_ids(rows, ids), empty_reason=reason)
 
 
 def _system_prompt(branch: str, mode: PickerMode) -> str:
-    mode_line = (
-        "El cliente pide MÁS opciones distintas a las ya mostradas."
-        if mode == "more_options"
-        else "Primera selección según criterios del cliente."
-    )
+    if mode == "rejected_options":
+        mode_line = (
+            "El cliente rechazó las opciones mostradas. Elegí otras propiedades "
+            "DISTINTAS (IDs no excluidos), aunque encajen menos estricto en criterios."
+        )
+    elif mode == "more_options":
+        mode_line = "El cliente pide MÁS opciones distintas a las ya mostradas."
+    else:
+        mode_line = "Primera selección según criterios del cliente."
     return (
         f"Sos selector de propiedades ({branch}) para WhatsApp. {mode_line}\n"
         "Respondé SOLO JSON: {\"ids\": [\"id1\", \"id2\"], \"empty_reason\": \"\"}\n"
@@ -136,8 +154,14 @@ def _pre_filter_pool(
     profile: SearchProfile,
     branch: str,
     exclude_ids: set[str],
+    *,
+    mode: PickerMode = "initial",
 ) -> list[dict[str, Any]]:
     pool = [r for r in rows if str(r.get("ID", "")).strip() not in exclude_ids]
+    if mode == "rejected_options":
+        if len(pool) <= _MAX_CATALOG_ROWS:
+            return pool
+        return pool[:_MAX_CATALOG_ROWS]
     if len(pool) <= _MAX_CATALOG_ROWS:
         return pool
     criteria = listing_filter_from_profile(profile)
@@ -159,13 +183,19 @@ async def pick_listing_properties(
 ) -> ListingPickResult:
     path = (branch or "compra").strip().lower()
     exclude = {str(i).strip() for i in (exclude_ids or []) if str(i).strip()}
-    pool = _pre_filter_pool(rows, profile, path, exclude)
+    pool = _pre_filter_pool(rows, profile, path, exclude, mode=mode)
     if not pool:
         return ListingPickResult(ids=[], rows=[], empty_reason="No hay más propiedades en catálogo.")
 
     catalog_block = format_catalog_compact_for_branch(pool, path)
     if not catalog_block.strip():
-        return _fallback_pick(rows, profile, branch=path, exclude_ids=exclude)
+        return _fallback_pick(
+            rows,
+            profile,
+            branch=path,
+            exclude_ids=exclude,
+            relaxed=mode == "rejected_options",
+        )
 
     ctx = dict(log_context or {})
     ctx["prompt_source"] = "listing_picker"
@@ -200,11 +230,23 @@ async def pick_listing_properties(
                     )
             reason = str(data.get("empty_reason") or "").strip()
             if reason:
-                fallback = _fallback_pick(rows, profile, branch=path, exclude_ids=exclude)
+                fallback = _fallback_pick(
+                    rows,
+                    profile,
+                    branch=path,
+                    exclude_ids=exclude,
+                    relaxed=mode == "rejected_options",
+                )
                 if fallback.ids:
                     return fallback
                 return ListingPickResult(ids=[], rows=[], empty_reason=reason)
     except RuntimeError:
         pass
 
-    return _fallback_pick(rows, profile, branch=path, exclude_ids=exclude)
+    return _fallback_pick(
+        rows,
+        profile,
+        branch=path,
+        exclude_ids=exclude,
+        relaxed=mode == "rejected_options",
+    )
