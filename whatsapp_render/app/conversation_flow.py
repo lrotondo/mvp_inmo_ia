@@ -189,7 +189,6 @@ class FlowResult:
     property_ref: str
     catalog_path: str | None
     candidate_ids: list[str]
-    bot_paused: bool = False
 
 
 def _listing_index(text: str) -> int | None:
@@ -632,7 +631,6 @@ async def handle_turn(
             property_ref = ref.strip()
 
     alerts: list[str] = []
-    bot_paused = False
 
     if plan.phase == Phase.WAITLIST_CONFIRM and phone_number_id.strip() and wa_id.strip():
         listing_summary = _listing_summary_for_waitlist(
@@ -655,7 +653,6 @@ async def handle_turn(
             requirements=requirements,
         )
         text = WAITLIST_CONFIRMATION_TEXT
-        bot_paused = True
 
     if flow_path == "captacion":
         cap = dict(out_capture)
@@ -669,7 +666,6 @@ async def handle_turn(
         if capture_is_complete(cap):
             alerts.append("ALERTA_CAPTACION_PROPIETARIO")
             text = CLOSING_CAPTACION_TEXT
-            bot_paused = True
 
     if flow_path == "compra" and _wants_visit(flow_path, user_text):
         alerts.append("ALERTA_VENTA")
@@ -690,5 +686,4 @@ async def handle_turn(
         property_ref=property_ref,
         catalog_path=plan.catalog_path,
         candidate_ids=plan.candidate_ids,
-        bot_paused=bot_paused,
     )

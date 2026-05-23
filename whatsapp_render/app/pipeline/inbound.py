@@ -22,7 +22,6 @@ class InboundTurnResult:
     catalog_path_used: str | None
     capture_data: dict[str, Any] | None
     has_waitlist_tag: bool = False
-    bot_paused: bool = False
 
 
 async def process_inbound_message(
@@ -68,5 +67,4 @@ async def process_inbound_message(
         catalog_path_used=result.catalog_path,
         capture_data=result.capture_data,
         has_waitlist_tag=result.phase == "waitlist_confirm",
-        bot_paused=result.bot_paused,
     )

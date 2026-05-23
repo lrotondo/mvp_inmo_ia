@@ -525,13 +525,6 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             wa_id,
         )
 
-        if session.bot_paused:
-            logger.info(
-                "Bot pausado para wa_id=%s (humano atiende); omitiendo LLM",
-                wa_id,
-            )
-            continue
-
         previous_flow_path = session.flow_path
         flow_path = resolve_flow_path(session, user_text)
         flow_just_switched = (
@@ -605,14 +598,12 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             turn_result.capture_data or dict(session.capture_data),
             outbound_for_client,
         )
-        bot_paused = turn_result.bot_paused or session.bot_paused
         await asyncio.to_thread(
             save_session,
             ctx.phone_number_id,
             wa_id,
             flow_path=flow_path,
             capture_data=capture_after_turn,
-            bot_paused=bot_paused,
         )
 
         try:
