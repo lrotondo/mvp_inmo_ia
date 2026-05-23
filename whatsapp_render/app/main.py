@@ -627,6 +627,18 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 user_text=user_text,
                 capture_data=capture_after_turn,
             )
+            if turn_result.visit_lead_type in ("venta", "alquiler"):
+                await try_register_flow_alert(
+                    lead_type=turn_result.visit_lead_type,
+                    phone_number_id=ctx.phone_number_id,
+                    wa_id=wa_id,
+                    contact_name=contact_name,
+                    property_ref=property_ref or "",
+                    interest_summary=turn_result.visit_lead_interest_summary,
+                    conversation_summary=turn_result.visit_lead_conversation_summary,
+                    capture_summary=capture_summary_text(capture_after_turn),
+                    access_token=ctx.access_token,
+                )
         except Exception:
             logger.exception(
                 "Error registrando alerta/lead wa_id=%s",

@@ -27,6 +27,7 @@ from app.listing_context import (
     build_listing_catalog_block,
     clear_listing_focus_state,
     get_focused_listing_option_index,
+    get_last_viewed_property_id,
     get_shown_listing_ids,
     listing_already_shown,
     load_last_listing_rows,
@@ -48,8 +49,27 @@ from app.prompts.templates import (
     build_chat_system_prompt,
     build_intake_bundle_question,
     build_triage_message,
+    build_visit_schedule_question,
     build_waitlist_bundle_question,
-    format_visit_handoff,
+    format_visit_confirmation,
+)
+from app.session_state import (
+    capture_is_complete,
+    capture_summary_text,
+    merge_capture_from_conversation,
+)
+from app.visit_lead import summarize_visit_lead
+from app.visit_flow import (
+    get_visit_answered,
+    get_visit_interest_text,
+    get_visit_pending,
+    get_visit_prompt_sent,
+    get_visit_property_ref,
+    get_visit_schedule_raw,
+    mark_visit_answered,
+    mark_visit_pending,
+    mark_visit_prompt_sent,
+    reset_visit_state,
 )
 from app.search_profile import (
     SearchProfile,
@@ -72,10 +92,6 @@ from app.waitlist_flow import (
     mark_waitlist_pending,
     mark_waitlist_prompt_sent,
     reset_waitlist_state,
-)
-from app.session_state import (
-    capture_is_complete,
-    merge_capture_from_conversation,
 )
 from app.visit_intent import (
     conversation_requests_human,
@@ -134,6 +150,8 @@ class Phase(str, Enum):
     CAPTACION = "captacion"
     WAITLIST_INTAKE = "waitlist_intake"
     WAITLIST_CONFIRM = "waitlist_confirm"
+    VISIT_INTAKE = "visit_intake"
+    VISIT_CONFIRM = "visit_confirm"
     # Alias compat tests/logs
     WAITLIST = "waitlist_confirm"
 
@@ -195,6 +213,9 @@ class FlowResult:
     property_ref: str
     catalog_path: str | None
     candidate_ids: list[str]
+    visit_lead_type: str | None = None
+    visit_lead_interest_summary: str = ""
+    visit_lead_conversation_summary: str = ""
 
 
 def _listing_index(text: str) -> int | None:
@@ -278,11 +299,13 @@ def decide_phase(
             return Phase.WAITLIST_CONFIRM
         return Phase.WAITLIST_INTAKE
 
+    if get_visit_pending(capture_data):
+        if get_visit_answered(capture_data):
+            return Phase.VISIT_CONFIRM
+        return Phase.VISIT_INTAKE
+
     if user_requests_fresh_listing(user_text) or not shown:
         return Phase.LISTING
-
-    if _wants_visit(path, user_text):
-        return Phase.GENERAL
 
     if _is_detail_pick(user_text):
         return Phase.DETAIL
@@ -547,6 +570,49 @@ def _listing_summary_for_waitlist(
     return "\n".join(lines)
 
 
+def _resolve_visit_property_ref(
+    capture_data: dict[str, Any] | None,
+    *,
+    catalog_path: str | None,
+    fallback_ref: str = "",
+) -> str:
+    stored = get_visit_property_ref(capture_data)
+    if stored:
+        return stored
+    pid = get_last_viewed_property_id(capture_data)
+    if pid:
+        return pid
+    row = load_last_viewed_property_row(
+        capture_data,
+        catalog_csv_path=catalog_path,
+    )
+    if row is not None:
+        titulo = str(row.get("Titulo", "")).strip()
+        direccion = str(row.get("Direccion", "")).strip()
+        if titulo:
+            return titulo
+        if direccion:
+            return direccion
+        return str(row.get("ID", "")).strip()
+    return (fallback_ref or "").strip()
+
+
+def _property_context_for_visit(
+    catalog_path: str | None,
+    capture_data: dict[str, Any] | None,
+    branch: str,
+) -> str:
+    row = load_last_viewed_property_row(
+        capture_data,
+        catalog_csv_path=catalog_path,
+    )
+    if row is not None:
+        block = build_active_property_context_block(row, branch=branch)
+        if block:
+            return block
+    return _listing_summary_for_waitlist(catalog_path, capture_data, branch)
+
+
 async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     if plan.phase == Phase.TRIAGE:
         return build_triage_message(ctx.tenant_name)
@@ -560,15 +626,28 @@ async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     if plan.phase == Phase.WAITLIST_CONFIRM:
         return WAITLIST_CONFIRMATION_TEXT
 
+    if plan.phase == Phase.VISIT_INTAKE:
+        visit_ref = _resolve_visit_property_ref(
+            ctx.capture_data,
+            catalog_path=plan.catalog_path,
+            fallback_ref=plan.property_ref,
+        )
+        return build_visit_schedule_question(visit_ref)
+
+    if plan.phase == Phase.VISIT_CONFIRM:
+        visit_ref = _resolve_visit_property_ref(
+            ctx.capture_data,
+            catalog_path=plan.catalog_path,
+            fallback_ref=plan.property_ref,
+        )
+        return format_visit_confirmation(visit_ref)
+
     if plan.phase == Phase.LISTING:
         return _build_listing_text(plan)
 
     if plan.phase == Phase.DETAIL:
         rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
         return _detail_intro(user_text, rows, capture_data=ctx.capture_data)
-
-    if plan.phase == Phase.GENERAL and _wants_visit(ctx.flow_path, user_text):
-        return format_visit_handoff(plan.property_ref)
 
     return await _chat_reply(ctx, user_text, plan)
 
@@ -593,6 +672,7 @@ async def handle_turn(
     if flow_just_switched and flow_path in ("compra", "alquiler"):
         working_capture = reset_intake_state(working_capture)
         working_capture = reset_waitlist_state(working_capture)
+        working_capture = reset_visit_state(working_capture)
 
     if flow_path in ("compra", "alquiler"):
         if (
@@ -612,6 +692,37 @@ async def handle_turn(
             and (user_text or "").strip()
         ):
             working_capture = mark_waitlist_answered(working_capture, user_text)
+
+        if (
+            get_visit_pending(working_capture)
+            and get_visit_prompt_sent(working_capture)
+            and not get_visit_answered(working_capture)
+            and (user_text or "").strip()
+        ):
+            working_capture = mark_visit_answered(working_capture, user_text)
+
+        if (
+            _wants_visit(flow_path, user_text)
+            and not get_visit_pending(working_capture)
+            and get_intake_answered(working_capture)
+            and not get_waitlist_pending(working_capture)
+        ):
+            visit_ref = _resolve_visit_property_ref(
+                working_capture,
+                catalog_path=None,
+                fallback_ref=extract_property_ref(
+                    "",
+                    flow_path=flow_path,
+                    catalog_sale_path=catalog_sale_path,
+                    catalog_rent_path=catalog_rent_path,
+                    current_user_text=user_text,
+                ),
+            )
+            working_capture = mark_visit_pending(
+                working_capture,
+                interest_text=user_text,
+                property_ref=visit_ref,
+            )
 
     if (
         flow_path in ("compra", "alquiler")
@@ -653,6 +764,9 @@ async def handle_turn(
 
     if plan.phase == Phase.WAITLIST_INTAKE:
         out_capture = mark_waitlist_prompt_sent(out_capture)
+
+    if plan.phase == Phase.VISIT_INTAKE:
+        out_capture = mark_visit_prompt_sent(out_capture)
 
     if plan.phase == Phase.LISTING and plan.candidate_ids:
         out_capture = merge_last_listing_into_capture(
@@ -697,6 +811,9 @@ async def handle_turn(
             )
 
     alerts: list[str] = []
+    visit_lead_type: str | None = None
+    visit_lead_interest_summary = ""
+    visit_lead_conversation_summary = ""
 
     if plan.phase == Phase.WAITLIST_CONFIRM and phone_number_id.strip() and wa_id.strip():
         listing_summary = _listing_summary_for_waitlist(
@@ -720,6 +837,37 @@ async def handle_turn(
         )
         text = WAITLIST_CONFIRMATION_TEXT
 
+    if plan.phase == Phase.VISIT_CONFIRM:
+        visit_ref = _resolve_visit_property_ref(
+            out_capture,
+            catalog_path=plan.catalog_path,
+            fallback_ref=property_ref,
+        )
+        if visit_ref.strip():
+            property_ref = visit_ref.strip()
+        summary = await summarize_visit_lead(
+            flow_path=flow_path,
+            user_messages=user_messages_for_flow(
+                user_text,
+                flow_path,
+                out_capture,
+            ),
+            visit_interest_text=get_visit_interest_text(out_capture),
+            visit_schedule_raw=get_visit_schedule_raw(out_capture),
+            property_ref=property_ref,
+            property_context=_property_context_for_visit(
+                plan.catalog_path,
+                out_capture,
+                flow_path,
+            ),
+            log_context={"flow_path": flow_path, "wa_id": wa_id},
+        )
+        visit_lead_type = "alquiler" if flow_path == "alquiler" else "venta"
+        visit_lead_interest_summary = summary.interest_summary
+        visit_lead_conversation_summary = summary.conversation_summary
+        text = format_visit_confirmation(property_ref)
+        out_capture = reset_visit_state(out_capture)
+
     if flow_path == "captacion":
         cap = dict(out_capture)
         from app.session_state import SessionState
@@ -733,14 +881,6 @@ async def handle_turn(
             alerts.append("ALERTA_CAPTACION_PROPIETARIO")
             text = CLOSING_CAPTACION_TEXT
 
-    if flow_path == "compra" and _wants_visit(flow_path, user_text):
-        alerts.append("ALERTA_VENTA")
-        text = format_visit_handoff(property_ref)
-
-    if flow_path == "alquiler" and _wants_visit(flow_path, user_text):
-        alerts.append("ALERTA_ALQUILER")
-        text = format_visit_handoff(property_ref)
-
     out_capture = append_user_flow_message(out_capture, flow_path, user_text)
 
     return FlowResult(
@@ -752,4 +892,7 @@ async def handle_turn(
         property_ref=property_ref,
         catalog_path=plan.catalog_path,
         candidate_ids=plan.candidate_ids,
+        visit_lead_type=visit_lead_type,
+        visit_lead_interest_summary=visit_lead_interest_summary,
+        visit_lead_conversation_summary=visit_lead_conversation_summary,
     )

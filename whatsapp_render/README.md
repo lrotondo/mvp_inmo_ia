@@ -289,10 +289,10 @@ Lógica en [`app/conversation_flow.py`](app/conversation_flow.py) (fachada: [`ap
 | Ninguna sirve (waitlist) | 1) Pregunta fija con todos los requisitos en un mensaje; 2) LLM resume → `client_waitlist` → confirmación | Sí (solo en paso 2) |
 | Preguntas sobre opciones ya mostradas | Respuesta con datos compactos de las 3 opciones | DeepSeek (prompt mínimo) |
 | Detalle (`opción N`, fotos, elección) | Intro fija + ficha/media | No |
-| Visita / asesor | Texto fijo de handoff; alertas inyectadas por código | No |
+| Visita / asesor | 1) Pregunta fija por días y horarios; 2) LLM resume conversación → lead + confirmación al cliente | Sí (paso 2) |
 | Captación | Chat con prompt mínimo; cierre fijo al completar captura | DeepSeek opcional |
 
-Estado por chat en `chat_sessions` (`last_listing` en `capture_data` para elegir opción 1/2/3). Alertas `ALERTA_VENTA`, `ALERTA_ALQUILER` y `ALERTA_CAPTACION_PROPIETARIO` las detecta el backend en `conversation_flow`, no el LLM.
+Estado por chat en `chat_sessions` (`last_listing` en `capture_data` para elegir opción 1/2/3). Alertas `ALERTA_CAPTACION_PROPIETARIO` las detecta el backend en `conversation_flow`; visita/compra/alquiler registran lead en fase `visit_confirm` con resumen LLM.
 
 **Catálogo alquiler:** si `catalog_rent_csv_path` está vacío y **venta es CSV local**, el backend busca `{nombre_venta}_alquiler.csv` en la misma carpeta. Si **venta es Google Sheet**, configurá explícitamente el Sheet de alquiler en `catalog_rent_csv_path`.
 
@@ -331,7 +331,7 @@ Requiere `DATABASE_URL`. El registro ocurre cuando el backend dispara una alerta
 - Desactivado automáticamente si `APP_ENV` / `ENVIRONMENT` es `development`, `dev` o `local`.
 - `LEAD_DETECTION_ENABLED=false` también lo apaga en producción.
 - Campos: `wa_id`, `contact_name`, `property_ref`, `interest_summary`, `conversation_summary`, `conversation_at`
-- `conversation_summary`: resumen en prosa (2–4 oraciones) generado por LLM; no es transcripción línea a línea del chat
+- `conversation_summary`: resumen en prosa (2–4 oraciones) generado por LLM en visita y waitlist; no es transcripción línea a línea del chat
 - Mismo cliente + propiedad en 24 h → **actualiza** la fila (sin reenviar aviso).
 
 ### Aviso por WhatsApp al equipo

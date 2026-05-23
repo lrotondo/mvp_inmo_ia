@@ -8,11 +8,24 @@ CLOSING_CAPTACION_TEXT = (
     "para coordinar los pasos a seguir y realizar la tasación."
 )
 
-VISIT_HANDOFF_TEMPLATE = (
+VISIT_CONFIRMATION_TEXT = (
     "¡Perfecto! Registré tu interés{property_part}.\n\n"
     "Un asesor de nuestro equipo se va a comunicar con vos por WhatsApp a la brevedad "
-    "para coordinar la visita según la disponibilidad real.\n\n"
-    "Si tenés alguna preferencia general (mañana, tarde o fin de semana), contanos; "
+    "para coordinar la visita según la disponibilidad real."
+)
+
+_VISIT_SCHEDULE_QUESTION_TEMPLATE = (
+    "¡Genial! Para que un asesor te contacte y coordinen la visita{property_part}, "
+    "contame en *un solo mensaje*:\n"
+    "• ¿Qué *días* te vienen bien? (entre semana, fin de semana, o fechas puntuales)\n"
+    "• ¿Preferís *mañana*, *tarde*, o no tenés preferencia de horario?"
+)
+
+# Compat: plantilla histórica (confirmación + pedido de horarios en un solo mensaje).
+VISIT_HANDOFF_TEMPLATE = (
+    VISIT_CONFIRMATION_TEXT
+    + "\n\n"
+    + "Si tenés alguna preferencia general (mañana, tarde o fin de semana), contanos; "
     "el asesor lo tendrá en cuenta al contactarte."
 )
 
@@ -48,7 +61,25 @@ Reglas:
 )
 
 
+def _visit_property_part(property_ref: str) -> str:
+    prop = (property_ref or "").strip()
+    return f" de *{prop}*" if prop else ""
+
+
+def build_visit_schedule_question(property_ref: str = "") -> str:
+    return _VISIT_SCHEDULE_QUESTION_TEMPLATE.format(
+        property_part=_visit_property_part(property_ref),
+    )
+
+
+def format_visit_confirmation(property_ref: str = "") -> str:
+    return VISIT_CONFIRMATION_TEXT.format(
+        property_part=_visit_property_part(property_ref),
+    )
+
+
 def format_visit_handoff(property_ref: str) -> str:
+    """Compat tests: confirmación + pedido de horarios en un mensaje."""
     prop = (property_ref or "").strip()
     part = f" en *{prop}*" if prop else ""
     return VISIT_HANDOFF_TEMPLATE.format(property_part=part)
