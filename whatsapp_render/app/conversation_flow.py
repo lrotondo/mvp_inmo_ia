@@ -24,12 +24,15 @@ from app.conversation import build_model_messages
 from app.llm.deepseek import chat_completion
 from app.listing_context import (
     build_listing_catalog_block,
+    clear_focused_listing_option,
+    get_focused_listing_option_index,
     get_shown_listing_ids,
     listing_already_shown,
     load_last_listing_rows,
     merge_last_listing_into_capture,
     property_ref_from_listing_choice,
     resolve_listing_choice_row,
+    sync_focused_listing_option,
     user_rejects_all_listings,
     user_requests_fresh_listing,
     user_requests_more_photos,
@@ -330,13 +333,27 @@ def _build_listing_text(plan: FlowPlan) -> str:
     return f"{_LISTING_INTRO}\n\n{tag}\n\n{_LISTING_CLOSING}"
 
 
-def build_detail_outbound(user_text: str, *, listing_rows: list) -> str:
+def build_detail_outbound(
+    user_text: str,
+    *,
+    listing_rows: list,
+    capture_data: dict[str, Any] | None = None,
+) -> str:
     """Texto introductorio antes de enviar ficha/detalle (tests y delivery)."""
-    return _detail_intro(user_text, listing_rows)
+    return _detail_intro(user_text, listing_rows, capture_data=capture_data)
 
 
-def _detail_intro(user_text: str, listing_rows: list) -> str:
-    row = resolve_listing_choice_row(user_text, listing_rows)
+def _detail_intro(
+    user_text: str,
+    listing_rows: list,
+    *,
+    capture_data: dict[str, Any] | None = None,
+) -> str:
+    row = resolve_listing_choice_row(
+        user_text,
+        listing_rows,
+        capture_data=capture_data,
+    )
     titulo = str(row.get("Titulo", "")).strip() if row else ""
     if user_requests_more_photos(user_text):
         return (
@@ -420,11 +437,17 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
         if listing_followup
         else []
     )
+    focused_index = (
+        get_focused_listing_option_index(ctx.capture_data)
+        if listing_followup
+        else None
+    )
     messages = build_model_messages(
         system,
         user_text,
         prior_user_messages=prior_messages,
         listing_followup=listing_followup,
+        focused_option_index=focused_index,
     )
 
     log_context: dict[str, Any] = {
@@ -524,7 +547,7 @@ async def build_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
 
     if plan.phase == Phase.DETAIL:
         rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
-        return _detail_intro(user_text, rows)
+        return _detail_intro(user_text, rows, capture_data=ctx.capture_data)
 
     if plan.phase == Phase.GENERAL and _wants_visit(ctx.flow_path, user_text):
         return format_visit_handoff(plan.property_ref)
@@ -622,13 +645,29 @@ async def handle_turn(
         )
     elif plan.phase == Phase.LISTING and user_requests_fresh_listing(user_text):
         out_capture.pop("last_listing", None)
+        out_capture = clear_focused_listing_option(out_capture)
 
     property_ref = plan.property_ref
     rows = load_last_listing_rows(plan.catalog_path, out_capture)
     if plan.phase == Phase.DETAIL and rows:
-        ref = property_ref_from_listing_choice(user_text, rows)
+        ref = property_ref_from_listing_choice(
+            user_text,
+            rows,
+            capture_data=out_capture,
+        )
         if ref.strip():
             property_ref = ref.strip()
+
+    if rows and flow_path in ("compra", "alquiler"):
+        if user_requests_fresh_listing(user_text):
+            out_capture = clear_focused_listing_option(out_capture)
+        else:
+            out_capture = sync_focused_listing_option(
+                out_capture,
+                user_text=user_text,
+                bot_text=text,
+                listing_rows=rows,
+            )
 
     alerts: list[str] = []
 

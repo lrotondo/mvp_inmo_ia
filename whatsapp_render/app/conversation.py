@@ -10,6 +10,7 @@ def build_user_message_for_llm(
     *,
     prior_user_messages: list[str] | None = None,
     listing_followup: bool = False,
+    focused_option_index: int | None = None,
 ) -> str:
     """Arma el mensaje user para el LLM con contexto de listado e historial corto."""
     parts: list[str] = []
@@ -18,6 +19,12 @@ def build_user_message_for_llm(
             "Contexto: el cliente ya recibió el listado de propiedades (opciones con fotos). "
             "Responde sobre esas opciones usando el bloque OPCIONES MOSTRADAS del system."
         )
+        if focused_option_index is not None and focused_option_index >= 1:
+            parts.append(
+                f"Opción en foco (última sobre la que se habló): Opción {focused_option_index}. "
+                "Si la consulta actual es ambigua (precio, patio, etc.), respondé sobre esa opción "
+                "salvo que el cliente nombre otra explícitamente."
+            )
     prior = [m.strip() for m in (prior_user_messages or []) if m.strip()]
     for index, msg in enumerate(prior, start=1):
         parts.append(f"Mensaje anterior {index} del cliente: {msg}")
@@ -33,12 +40,14 @@ def build_model_messages(
     *,
     prior_user_messages: list[str] | None = None,
     listing_followup: bool = False,
+    focused_option_index: int | None = None,
 ) -> list[dict[str, str]]:
     """System + un mensaje user (historial corto opcional en el mismo user)."""
     user_content = build_user_message_for_llm(
         current_user_text,
         prior_user_messages=prior_user_messages,
         listing_followup=listing_followup,
+        focused_option_index=focused_option_index,
     )
     if not user_content.strip():
         user_content = format_user_message(current_user_text)

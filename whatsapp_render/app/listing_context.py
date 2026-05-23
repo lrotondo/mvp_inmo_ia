@@ -9,7 +9,45 @@ from app.property_matching import _normalize_property_match_text
 
 _LAST_LISTING_KEY = "last_listing"
 _SHOWN_LISTING_IDS_KEY = "shown_listing_ids"
+_FOCUSED_OPTION_INDEX_KEY = "focused_listing_option_index"
 _MAX_LISTING_ITEMS = 3
+
+# Tokens genéricos en follow-ups (p. ej. "precio de alquiler") que no deben desambiguar filas.
+_GENERIC_SCORE_TOKENS = frozenset(
+    {
+        "alquiler",
+        "compra",
+        "precio",
+        "expensas",
+        "garantia",
+        "mensual",
+        "dormitorios",
+        "ambientes",
+        "caracteristicas",
+        "consultar",
+        "opcion",
+        "cual",
+        "cuál",
+        "tiene",
+        "tienen",
+        "cuanto",
+        "cuánto",
+        "cuantos",
+        "cuántos",
+        "hay",
+        "incluye",
+        "acepta",
+        "admite",
+        "sale",
+        "usd",
+        "pesos",
+    }
+)
+
+_BOT_OPTION_CITE_RE = re.compile(
+    r"\b(?:la\s+)?opci[oó]n\s*(\d+)\b",
+    re.I,
+)
 
 _REJECT_ALL_LISTING_RE = re.compile(
     r"\b("
@@ -106,7 +144,94 @@ def merge_last_listing_into_capture(
         "branch": (branch or "").strip().lower(),
         "catalog_path": catalog_path,
     }
-    return merge_shown_listing_ids(merged, ids)
+    merged = merge_shown_listing_ids(merged, ids)
+    return clear_focused_listing_option(merged)
+
+
+def get_focused_listing_option_index(
+    capture_data: dict[str, Any] | None,
+) -> int | None:
+    raw = (capture_data or {}).get(_FOCUSED_OPTION_INDEX_KEY)
+    if raw is None:
+        return None
+    try:
+        index = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if index < 1:
+        return None
+    return index
+
+
+def set_focused_listing_option_index(
+    capture_data: dict[str, Any],
+    option_index: int,
+) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    if option_index < 1:
+        return merged
+    merged[_FOCUSED_OPTION_INDEX_KEY] = int(option_index)
+    return merged
+
+
+def clear_focused_listing_option(capture_data: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    merged.pop(_FOCUSED_OPTION_INDEX_KEY, None)
+    return merged
+
+
+def infer_focused_option_index_from_text(
+    text: str,
+    *,
+    max_options: int,
+) -> int | None:
+    """Índice 1-based si el texto cita 'Opción N' (p. ej. respuesta del bot)."""
+    if max_options < 1:
+        return None
+    indices: list[int] = []
+    for match in _BOT_OPTION_CITE_RE.finditer(text or ""):
+        try:
+            indices.append(int(match.group(1)))
+        except ValueError:
+            continue
+    for index in reversed(indices):
+        if 1 <= index <= max_options:
+            return index
+    return None
+
+
+def sync_focused_listing_option(
+    capture_data: dict[str, Any],
+    *,
+    user_text: str,
+    bot_text: str,
+    listing_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Actualiza la opción en foco: elección explícita del usuario o cita en la respuesta del bot.
+    Se mantiene entre turnos hasta un listado nuevo o pedido de más opciones.
+    """
+    merged = dict(capture_data or {})
+    n = len(listing_rows)
+    if n < 1:
+        return clear_focused_listing_option(merged)
+
+    user_index = _listing_index_from_text(user_text)
+    if user_index is not None and 1 <= user_index <= n:
+        return set_focused_listing_option_index(merged, user_index)
+
+    if user_showed_property_selection(user_text):
+        row = _resolve_listing_choice_by_semantic_score(user_text, listing_rows)
+        if row is not None:
+            for idx, candidate in enumerate(listing_rows, start=1):
+                if candidate is row or str(candidate.get("ID")) == str(row.get("ID")):
+                    return set_focused_listing_option_index(merged, idx)
+
+    bot_index = infer_focused_option_index_from_text(bot_text, max_options=n)
+    if bot_index is not None:
+        return set_focused_listing_option_index(merged, bot_index)
+
+    return merged
 
 
 def load_last_listing_rows(
@@ -148,7 +273,11 @@ def _score_row_for_choice(user_norm: str, row: dict[str, Any]) -> int:
             key = "departamento"
         if key in blob:
             score += 12
-    tokens = [t for t in re.split(r"[^\wáéíóúñ]+", user_norm) if len(t) >= 4]
+    tokens = [
+        t
+        for t in re.split(r"[^\wáéíóúñ]+", user_norm)
+        if len(t) >= 4 and t not in _GENERIC_SCORE_TOKENS
+    ]
     for token in tokens:
         if token in blob:
             score += len(token)
@@ -178,9 +307,31 @@ def _listing_index_from_text(text: str) -> int | None:
     return None
 
 
+def _resolve_listing_choice_by_semantic_score(
+    user_text: str,
+    listing_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    text = (user_text or "").strip()
+    if not text:
+        return None
+    user_norm = _normalize_property_match_text(text)
+    best: dict[str, Any] | None = None
+    best_score = 0
+    for row in listing_rows:
+        score = _score_row_for_choice(user_norm, row)
+        if score > best_score:
+            best = row
+            best_score = score
+    if best_score >= 8:
+        return best
+    return None
+
+
 def resolve_listing_choice_row(
     user_text: str,
     listing_rows: list[dict[str, Any]],
+    *,
+    capture_data: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Elige una fila solo entre las del último listado enviado."""
     if not listing_rows:
@@ -194,25 +345,29 @@ def resolve_listing_choice_row(
     if index is not None and 1 <= index <= len(listing_rows):
         return listing_rows[index - 1]
 
-    user_norm = _normalize_property_match_text(text)
-    best: dict[str, Any] | None = None
-    best_score = 0
-    for row in listing_rows:
-        score = _score_row_for_choice(user_norm, row)
-        if score > best_score:
-            best = row
-            best_score = score
+    row = _resolve_listing_choice_by_semantic_score(text, listing_rows)
+    if row is not None:
+        return row
 
-    if best_score >= 8:
-        return best
+    if user_asks_about_shown_listing(text):
+        focused = get_focused_listing_option_index(capture_data)
+        if focused is not None and 1 <= focused <= len(listing_rows):
+            return listing_rows[focused - 1]
+
     return None
 
 
 def property_ref_from_listing_choice(
     user_text: str,
     listing_rows: list[dict[str, Any]],
+    *,
+    capture_data: dict[str, Any] | None = None,
 ) -> str:
-    row = resolve_listing_choice_row(user_text, listing_rows)
+    row = resolve_listing_choice_row(
+        user_text,
+        listing_rows,
+        capture_data=capture_data,
+    )
     if row is None:
         return ""
     return str(row.get("ID", "")).strip()

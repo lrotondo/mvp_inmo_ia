@@ -263,7 +263,11 @@ def resolve_detail_property_row(
 
     listado_rows = load_last_listing_rows(catalog_csv_path, capture_data)
 
-    choice_row = resolve_listing_choice_row(current_user_text, listado_rows)
+    choice_row = resolve_listing_choice_row(
+        current_user_text,
+        listado_rows,
+        capture_data=capture_data,
+    )
     if choice_row is not None:
         return choice_row
 
@@ -338,9 +342,11 @@ def property_ref_for_detail_enrich(
 ) -> str:
     """Referencia desde mensaje del usuario (prioridad) o fallback."""
     from app.listing_context import (
+        get_focused_listing_option_index,
         load_last_listing_rows,
         property_ref_from_listing_choice,
         property_ref_from_listing_option_number,
+        user_asks_about_shown_listing,
     )
 
     scoped_rows = listing_rows
@@ -379,6 +385,12 @@ def property_ref_for_detail_enrich(
     if not user_interest and (outbound_message or "").strip() and (
         bot_promises_visual_material(outbound_message)
     ):
+        if scoped_rows:
+            focused = get_focused_listing_option_index(capture_data)
+            if focused is not None and 1 <= focused <= len(scoped_rows):
+                ref_focused = str(scoped_rows[focused - 1].get("ID", "")).strip()
+                if ref_focused:
+                    return ref_focused
         ref_bot = extract_property_ref(
             "",
             flow_path=flow_path,
