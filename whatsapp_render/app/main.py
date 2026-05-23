@@ -578,6 +578,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 catalog_rent_path=ctx.catalog_rent_csv_path,
                 property_ref=property_ref,
                 capture_data=turn_result.capture_data or session.capture_data,
+                skip_property_delivery=turn_result.skip_property_delivery,
             )
             outbound_for_client = delivery.text
         except MetaSendError as exc:

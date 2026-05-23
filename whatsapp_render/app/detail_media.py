@@ -169,7 +169,11 @@ def should_deliver_property_detail_ficha(
     capture_data: dict[str, Any] | None = None,
 ) -> bool:
     """Hay fila de catálogo y contexto de detalle / propiedad elegida."""
+    from app.prompts.templates import is_visit_confirmation_message
+
     path = (flow_path or "").strip().lower()
+    if is_visit_confirmation_message(outbound_message):
+        return False
     if path in ("nuevo", "captacion") or row is None:
         return False
     if _LISTADO_TAG_RE.search(outbound_message or ""):

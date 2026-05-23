@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 CLOSING_CAPTACION_TEXT = (
     "Muchas gracias por la información. Ya registré los datos de tu propiedad. "
@@ -76,6 +77,17 @@ def format_visit_confirmation(property_ref: str = "") -> str:
     return VISIT_CONFIRMATION_TEXT.format(
         property_part=_visit_property_part(property_ref),
     )
+
+
+_VISIT_CONFIRMATION_MARKER_RE = re.compile(
+    r"Registr[eé]\s+tu\s+inter[eé]s",
+    re.I,
+)
+
+
+def is_visit_confirmation_message(text: str) -> bool:
+    """True si el outbound es la confirmación de visita (sin ficha)."""
+    return bool(_VISIT_CONFIRMATION_MARKER_RE.search(text or ""))
 
 
 def format_visit_handoff(property_ref: str) -> str:

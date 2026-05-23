@@ -216,6 +216,7 @@ class FlowResult:
     visit_lead_type: str | None = None
     visit_lead_interest_summary: str = ""
     visit_lead_conversation_summary: str = ""
+    skip_property_delivery: bool = False
 
 
 def _listing_index(text: str) -> int | None:
@@ -570,30 +571,44 @@ def _listing_summary_for_waitlist(
     return "\n".join(lines)
 
 
+def _human_property_ref(row: dict[str, Any] | None) -> str:
+    if row is None:
+        return ""
+    titulo = str(row.get("Titulo", "")).strip()
+    direccion = str(row.get("Direccion", "")).strip()
+    if titulo:
+        return titulo
+    if direccion:
+        return direccion
+    return str(row.get("ID", "")).strip()
+
+
 def _resolve_visit_property_ref(
     capture_data: dict[str, Any] | None,
     *,
     catalog_path: str | None,
     fallback_ref: str = "",
 ) -> str:
-    stored = get_visit_property_ref(capture_data)
-    if stored:
-        return stored
-    pid = get_last_viewed_property_id(capture_data)
-    if pid:
-        return pid
     row = load_last_viewed_property_row(
         capture_data,
         catalog_csv_path=catalog_path,
     )
+    stored = get_visit_property_ref(capture_data)
+    if stored:
+        if stored.isdigit() and row is not None:
+            human = _human_property_ref(row)
+            if human and human != stored:
+                return human
+        return stored
     if row is not None:
-        titulo = str(row.get("Titulo", "")).strip()
-        direccion = str(row.get("Direccion", "")).strip()
-        if titulo:
-            return titulo
-        if direccion:
-            return direccion
-        return str(row.get("ID", "")).strip()
+        return _human_property_ref(row)
+    pid = get_last_viewed_property_id(capture_data)
+    if pid and catalog_path:
+        from app.catalog import get_property_row_by_ref
+
+        row_by_pid = get_property_row_by_ref(catalog_path, pid)
+        if row_by_pid is not None:
+            return _human_property_ref(row_by_pid)
     return (fallback_ref or "").strip()
 
 
@@ -814,6 +829,7 @@ async def handle_turn(
     visit_lead_type: str | None = None
     visit_lead_interest_summary = ""
     visit_lead_conversation_summary = ""
+    skip_property_delivery = False
 
     if plan.phase == Phase.WAITLIST_CONFIRM and phone_number_id.strip() and wa_id.strip():
         listing_summary = _listing_summary_for_waitlist(
@@ -836,6 +852,7 @@ async def handle_turn(
             requirements=requirements,
         )
         text = WAITLIST_CONFIRMATION_TEXT
+        skip_property_delivery = True
 
     if plan.phase == Phase.VISIT_CONFIRM:
         visit_ref = _resolve_visit_property_ref(
@@ -867,6 +884,7 @@ async def handle_turn(
         visit_lead_conversation_summary = summary.conversation_summary
         text = format_visit_confirmation(property_ref)
         out_capture = reset_visit_state(out_capture)
+        skip_property_delivery = True
 
     if flow_path == "captacion":
         cap = dict(out_capture)
@@ -895,4 +913,5 @@ async def handle_turn(
         visit_lead_type=visit_lead_type,
         visit_lead_interest_summary=visit_lead_interest_summary,
         visit_lead_conversation_summary=visit_lead_conversation_summary,
+        skip_property_delivery=skip_property_delivery,
     )

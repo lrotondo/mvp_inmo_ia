@@ -333,6 +333,7 @@ async def deliver_bot_response(
     catalog_rent_path: str | None = None,
     property_ref: str = "",
     capture_data: dict[str, Any] | None = None,
+    skip_property_delivery: bool = False,
 ) -> BotDeliveryResult:
     """
     Envía la respuesta al cliente. Listados con [LISTADO:ids] → intro + imágenes + cierre.
@@ -346,6 +347,16 @@ async def deliver_bot_response(
         current_user_text=current_user_text,
         flow_path=flow_path,
     )
+
+    if skip_property_delivery:
+        await send_whatsapp_text_message(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to_wa_id=to_wa_id,
+            message=body,
+            graph_version=graph_version,
+        )
+        return BotDeliveryResult(text=body)
 
     parsed_listado = parse_listado_tag(body)
     detail_intent = user_wants_specific_property_detail(current_user_text)
