@@ -23,15 +23,18 @@ from app.llm.listing_picker import pick_listing_properties
 from app.conversation import build_model_messages
 from app.llm.deepseek import chat_completion
 from app.listing_context import (
+    build_active_property_context_block,
     build_listing_catalog_block,
-    clear_focused_listing_option,
+    clear_listing_focus_state,
     get_focused_listing_option_index,
     get_shown_listing_ids,
     listing_already_shown,
     load_last_listing_rows,
+    load_last_viewed_property_row,
     merge_last_listing_into_capture,
     property_ref_from_listing_choice,
     resolve_listing_choice_row,
+    set_last_viewed_property,
     sync_focused_listing_option,
     user_rejects_all_listings,
     user_requests_fresh_listing,
@@ -418,6 +421,21 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
         if listing_rows:
             branch = plan.profile.branch if plan.profile else ctx.flow_path
             catalog_block = build_listing_catalog_block(listing_rows, branch=branch)
+            viewed_row = load_last_viewed_property_row(
+                ctx.capture_data,
+                catalog_csv_path=plan.catalog_path,
+            )
+            if viewed_row is not None:
+                active_block = build_active_property_context_block(
+                    viewed_row,
+                    branch=branch,
+                )
+                if active_block:
+                    catalog_block = (
+                        f"{active_block}\n\n{catalog_block}"
+                        if catalog_block
+                        else active_block
+                    )
     if not catalog_block and ctx.flow_path == "captacion":
         catalog_block = "(No aplica catálogo de búsqueda.)"
 
@@ -645,7 +663,7 @@ async def handle_turn(
         )
     elif plan.phase == Phase.LISTING and user_requests_fresh_listing(user_text):
         out_capture.pop("last_listing", None)
-        out_capture = clear_focused_listing_option(out_capture)
+        out_capture = clear_listing_focus_state(out_capture)
 
     property_ref = plan.property_ref
     rows = load_last_listing_rows(plan.catalog_path, out_capture)
@@ -658,9 +676,18 @@ async def handle_turn(
         if ref.strip():
             property_ref = ref.strip()
 
+    if property_ref.strip() and flow_path in ("compra", "alquiler"):
+        if plan.phase == Phase.DETAIL or user_showed_property_selection(user_text):
+            out_capture = set_last_viewed_property(
+                out_capture,
+                property_id=property_ref,
+                catalog_path=plan.catalog_path,
+                branch=flow_path,
+            )
+
     if rows and flow_path in ("compra", "alquiler"):
         if user_requests_fresh_listing(user_text):
-            out_capture = clear_focused_listing_option(out_capture)
+            out_capture = clear_listing_focus_state(out_capture)
         else:
             out_capture = sync_focused_listing_option(
                 out_capture,

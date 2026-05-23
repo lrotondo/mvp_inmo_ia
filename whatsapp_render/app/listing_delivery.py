@@ -21,6 +21,23 @@ from app.meta_client import (
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class BotDeliveryResult:
+    text: str
+    delivered_property_id: str = ""
+
+
+def _visual_delivery_result(
+    result: tuple[str | None, str | None] | str | None,
+) -> tuple[str | None, str]:
+    if result is None:
+        return None, ""
+    if isinstance(result, str):
+        return result, ""
+    text, prop_id = result
+    return text, prop_id or ""
+
 _LISTADO_TAG_RE = re.compile(r"\[LISTADO:([^\]]+)\]", re.I)
 _CATALOG_ESSAY_LINE_RE = re.compile(
     r"\|\s*Precio:|\*Características|dormitorios\s*\||"
@@ -316,11 +333,12 @@ async def deliver_bot_response(
     catalog_rent_path: str | None = None,
     property_ref: str = "",
     capture_data: dict[str, Any] | None = None,
-) -> str:
+) -> BotDeliveryResult:
     """
     Envía la respuesta al cliente. Listados con [LISTADO:ids] → intro + imágenes + cierre.
-    Retorna texto consolidado enviado al cliente.
+    Retorna texto consolidado y, si aplica, el id de propiedad cuya ficha se envió.
     """
+    delivered_property_id = ""
     body = (message or "").strip() or "No pude generar una respuesta en este momento."
     body = suppress_premature_catalog_outbound(
         body,
@@ -335,41 +353,53 @@ async def deliver_bot_response(
     # Detalle de una propiedad: prioridad sobre [LISTADO] (evita "Opción 1" y tag visible).
     if detail_intent:
         detail_body = strip_listado_tags(body)
-        visual_sent = await try_deliver_single_property_visual(
-            access_token=access_token,
-            phone_number_id=phone_number_id,
-            to_wa_id=to_wa_id,
-            message=detail_body,
-            catalog_csv_path=catalog_csv_path,
-            current_user_text=current_user_text,
-            flow_path=flow_path,
-            catalog_sale_path=catalog_sale_path,
-            catalog_rent_path=catalog_rent_path,
-            property_ref=property_ref,
-            capture_data=capture_data,
-            graph_version=graph_version,
+        visual_text, prop_id = _visual_delivery_result(
+            await try_deliver_single_property_visual(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                to_wa_id=to_wa_id,
+                message=detail_body,
+                catalog_csv_path=catalog_csv_path,
+                current_user_text=current_user_text,
+                flow_path=flow_path,
+                catalog_sale_path=catalog_sale_path,
+                catalog_rent_path=catalog_rent_path,
+                property_ref=property_ref,
+                capture_data=capture_data,
+                graph_version=graph_version,
+            )
         )
-        if visual_sent is not None:
-            return strip_listado_tags(visual_sent)
+        if visual_text is not None:
+            return BotDeliveryResult(
+                text=strip_listado_tags(visual_text),
+                delivered_property_id=prop_id,
+            )
 
     # Listado multi-opción: no usar envío de detalle (1 foto + tag en caption).
     if parsed_listado is None:
-        visual_sent = await try_deliver_single_property_visual(
-            access_token=access_token,
-            phone_number_id=phone_number_id,
-            to_wa_id=to_wa_id,
-            message=body,
-            catalog_csv_path=catalog_csv_path,
-            current_user_text=current_user_text,
-            flow_path=flow_path,
-            catalog_sale_path=catalog_sale_path,
-            catalog_rent_path=catalog_rent_path,
-            property_ref=property_ref,
-            capture_data=capture_data,
-            graph_version=graph_version,
+        visual_text, prop_id = _visual_delivery_result(
+            await try_deliver_single_property_visual(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                to_wa_id=to_wa_id,
+                message=body,
+                catalog_csv_path=catalog_csv_path,
+                current_user_text=current_user_text,
+                flow_path=flow_path,
+                catalog_sale_path=catalog_sale_path,
+                catalog_rent_path=catalog_rent_path,
+                property_ref=property_ref,
+                capture_data=capture_data,
+                graph_version=graph_version,
+            )
         )
-        if visual_sent is not None:
-            return strip_listado_tags(visual_sent)
+        if visual_text is not None:
+            if prop_id:
+                delivered_property_id = prop_id
+            return BotDeliveryResult(
+                text=strip_listado_tags(visual_text),
+                delivered_property_id=delivered_property_id,
+            )
 
     if not listing_image_delivery_enabled():
         await send_whatsapp_text_message(
@@ -379,7 +409,7 @@ async def deliver_bot_response(
             message=body,
             graph_version=graph_version,
         )
-        return body
+        return BotDeliveryResult(text=body)
 
     parsed = parsed_listado
     if parsed is None:
@@ -390,7 +420,7 @@ async def deliver_bot_response(
             message=body,
             graph_version=graph_version,
         )
-        return body
+        return BotDeliveryResult(text=body, delivered_property_id=delivered_property_id)
 
     rows = get_properties_by_ids(
         catalog_csv_path,
@@ -411,7 +441,7 @@ async def deliver_bot_response(
             message=fallback,
             graph_version=graph_version,
         )
-        return fallback
+        return BotDeliveryResult(text=fallback)
 
     sendable: list[tuple[dict[str, Any], str, str | None]] = []
     for idx, row in enumerate(rows, start=1):
@@ -430,7 +460,7 @@ async def deliver_bot_response(
             message=fallback,
             graph_version=graph_version,
         )
-        return fallback
+        return BotDeliveryResult(text=fallback)
 
     intro_text = _strip_catalog_essay_lines(strip_listado_tags(parsed.intro))
     closing_text = _strip_catalog_essay_lines(strip_listado_tags(parsed.closing))
@@ -505,4 +535,7 @@ async def deliver_bot_response(
         len(history_items),
         parsed.property_ids,
     )
-    return consolidated or parsed.text_without_tag or body
+    return BotDeliveryResult(
+        text=consolidated or parsed.text_without_tag or body,
+        delivered_property_id=delivered_property_id,
+    )

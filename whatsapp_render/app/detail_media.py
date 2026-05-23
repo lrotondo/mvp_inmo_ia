@@ -204,10 +204,19 @@ def should_enrich_property_detail(
     capture_data: dict[str, Any] | None = None,
 ) -> bool:
     """Ficha + material visual: detalle, elección de propiedad o promesa del bot."""
+    from app.listing_context import (
+        get_last_viewed_property_id,
+        user_asks_listing_attribute_followup,
+    )
+
     path = (flow_path or "").strip().lower()
     if path in ("nuevo", "captacion"):
         return False
     if user_wants_fresh_start(current_user_text):
+        return False
+    if get_last_viewed_property_id(capture_data) and user_asks_listing_attribute_followup(
+        current_user_text
+    ):
         return False
 
     body = (outbound_message or "").strip()
@@ -343,19 +352,35 @@ def property_ref_for_detail_enrich(
     """Referencia desde mensaje del usuario (prioridad) o fallback."""
     from app.listing_context import (
         get_focused_listing_option_index,
+        get_last_viewed_property_id,
         load_last_listing_rows,
+        load_last_viewed_property_row,
         property_ref_from_listing_choice,
         property_ref_from_listing_option_number,
         user_asks_about_shown_listing,
+        user_asks_listing_attribute_followup,
     )
 
     scoped_rows = listing_rows
     if scoped_rows is None:
         scoped_rows = load_last_listing_rows(catalog_csv_path, capture_data)
 
+    if user_asks_listing_attribute_followup(current_user_text):
+        viewed_id = get_last_viewed_property_id(capture_data)
+        if viewed_id:
+            return viewed_id
+        viewed_row = load_last_viewed_property_row(
+            capture_data,
+            catalog_csv_path=catalog_csv_path,
+        )
+        if viewed_row is not None:
+            return str(viewed_row.get("ID", "")).strip()
+
     if scoped_rows:
         ref_listing = property_ref_from_listing_choice(
-            current_user_text, scoped_rows
+            current_user_text,
+            scoped_rows,
+            capture_data=capture_data,
         )
         if ref_listing.strip():
             return ref_listing.strip()
@@ -367,8 +392,11 @@ def property_ref_for_detail_enrich(
             return opt_listing.strip()
 
     user_interest = user_showed_property_interest(current_user_text)
+    listing_followup = bool(scoped_rows) and user_asks_about_shown_listing(
+        current_user_text
+    )
 
-    if not user_interest:
+    if not user_interest and not listing_followup:
         ref_user = extract_property_ref(
             "",
             flow_path=flow_path,
@@ -391,6 +419,9 @@ def property_ref_for_detail_enrich(
                 ref_focused = str(scoped_rows[focused - 1].get("ID", "")).strip()
                 if ref_focused:
                     return ref_focused
+            viewed_id = get_last_viewed_property_id(capture_data)
+            if viewed_id:
+                return viewed_id
         ref_bot = extract_property_ref(
             "",
             flow_path=flow_path,
@@ -643,10 +674,10 @@ async def try_deliver_single_property_visual(
     property_ref: str = "",
     graph_version: str | None = None,
     capture_data: dict[str, Any] | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """
     Envía foto + texto (galería/video) cuando hay elección o promesa de material visual.
-    Retorna texto consolidado enviado, o None para envío de texto único normal.
+    Retorna (texto consolidado enviado, id de propiedad) o (None, None).
     """
     body = (message or "").strip()
 
@@ -669,9 +700,10 @@ async def try_deliver_single_property_visual(
         current_user_text=current_user_text,
         capture_data=capture_data,
     ):
-        return None
+        return None, None
 
     assert row is not None
+    delivered_id = str(row.get("ID", "")).strip() or None
 
     intro_part = _split_detail_intro(body)
     tail_part = extract_detail_tail(body)
@@ -726,7 +758,7 @@ async def try_deliver_single_property_visual(
         can_send_image,
         bool(cta_history),
     )
-    return consolidated
+    return consolidated, delivered_id
 
 
 def ensure_detail_includes_video(

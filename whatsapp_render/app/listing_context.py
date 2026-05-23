@@ -10,6 +10,7 @@ from app.property_matching import _normalize_property_match_text
 _LAST_LISTING_KEY = "last_listing"
 _SHOWN_LISTING_IDS_KEY = "shown_listing_ids"
 _FOCUSED_OPTION_INDEX_KEY = "focused_listing_option_index"
+_LAST_VIEWED_PROPERTY_KEY = "last_viewed_property"
 _MAX_LISTING_ITEMS = 3
 
 # Tokens genéricos en follow-ups (p. ej. "precio de alquiler") que no deben desambiguar filas.
@@ -41,7 +42,19 @@ _GENERIC_SCORE_TOKENS = frozenset(
         "sale",
         "usd",
         "pesos",
+        "mascotas",
+        "mascota",
     }
+)
+
+_DETAIL_FOLLOWUP_RE = re.compile(
+    r"\b("
+    r"m[aá]s\s+info|contame\s+m[aá]s|cu[eé]ntame\s+m[aá]s|"
+    r"detalles?|ampli[aá]|"
+    r"(?:ver|mostr(?:ar|ame))\s+(?:las\s+)?fotos|"
+    r"fotos?|videos?|galer[ií]a|recorrido|tour\s*360|ficha"
+    r")\b",
+    re.I,
 )
 
 _BOT_OPTION_CITE_RE = re.compile(
@@ -145,7 +158,71 @@ def merge_last_listing_into_capture(
         "catalog_path": catalog_path,
     }
     merged = merge_shown_listing_ids(merged, ids)
-    return clear_focused_listing_option(merged)
+    return clear_listing_focus_state(merged)
+
+
+def get_last_viewed_property_id(capture_data: dict[str, Any] | None) -> str:
+    raw = (capture_data or {}).get(_LAST_VIEWED_PROPERTY_KEY)
+    if not isinstance(raw, dict):
+        return ""
+    return str(raw.get("id") or "").strip()
+
+
+def set_last_viewed_property(
+    capture_data: dict[str, Any],
+    *,
+    property_id: str,
+    catalog_path: str | None,
+    branch: str,
+) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    pid = str(property_id or "").strip()
+    if not pid:
+        return merged
+    merged[_LAST_VIEWED_PROPERTY_KEY] = {
+        "id": pid,
+        "catalog_path": (catalog_path or "").strip() or None,
+        "branch": (branch or "").strip().lower(),
+    }
+    rows = load_last_listing_rows(catalog_path, merged)
+    for idx, row in enumerate(rows, start=1):
+        if str(row.get("ID", "")).strip() == pid:
+            merged = set_focused_listing_option_index(merged, idx)
+            break
+    return merged
+
+
+def clear_last_viewed_property(capture_data: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    merged.pop(_LAST_VIEWED_PROPERTY_KEY, None)
+    return merged
+
+
+def clear_listing_focus_state(capture_data: dict[str, Any]) -> dict[str, Any]:
+    """Limpia opción en foco y última ficha vista (listado nuevo / más opciones)."""
+    return clear_last_viewed_property(clear_focused_listing_option(capture_data))
+
+
+def load_last_viewed_property_row(
+    capture_data: dict[str, Any] | None,
+    *,
+    catalog_csv_path: str | None = None,
+) -> dict[str, Any] | None:
+    raw = (capture_data or {}).get(_LAST_VIEWED_PROPERTY_KEY)
+    if not isinstance(raw, dict):
+        return None
+    pid = str(raw.get("id") or "").strip()
+    path = str(raw.get("catalog_path") or "").strip() or catalog_csv_path
+    if not pid or not path:
+        return None
+    rows = get_properties_by_ids(path, [pid], max_items=1)
+    if rows:
+        return rows[0]
+    listing_rows = load_last_listing_rows(catalog_csv_path, capture_data)
+    for row in listing_rows:
+        if str(row.get("ID", "")).strip() == pid:
+            return row
+    return None
 
 
 def get_focused_listing_option_index(
@@ -350,6 +427,9 @@ def resolve_listing_choice_row(
         return row
 
     if user_asks_about_shown_listing(text):
+        viewed = load_last_viewed_property_row(capture_data)
+        if viewed is not None:
+            return viewed
         focused = get_focused_listing_option_index(capture_data)
         if focused is not None and 1 <= focused <= len(listing_rows):
             return listing_rows[focused - 1]
@@ -472,6 +552,34 @@ def user_asks_about_shown_listing(user_text: str) -> bool:
     if _listing_index_from_text(text) is not None:
         return True
     return has_followup
+
+
+def user_asks_listing_attribute_followup(user_text: str) -> bool:
+    """Follow-up sobre precio/atributos sin pedir ficha, fotos ni otra opción."""
+    text = (user_text or "").strip()
+    if not user_asks_about_shown_listing(text):
+        return False
+    if user_requests_more_photos(text) or user_showed_property_selection(text):
+        return False
+    if _DETAIL_FOLLOWUP_RE.search(text):
+        return False
+    return True
+
+
+def build_active_property_context_block(
+    row: dict[str, Any],
+    *,
+    branch: str,
+) -> str:
+    compact = format_row_compact(row, branch)
+    if not compact:
+        return ""
+    return (
+        "### PROPIEDAD EN DETALLE (contexto activo)\n"
+        "El cliente ya recibió la ficha de esta propiedad. "
+        "Respondé sobre ella si la consulta es ambigua (precio, mascotas, patio, etc.):\n"
+        f"{compact}"
+    )
 
 
 def build_listing_catalog_block(

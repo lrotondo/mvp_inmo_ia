@@ -4,12 +4,16 @@ from app.conversation import build_user_message_for_llm
 from app.listing_context import (
     clear_focused_listing_option,
     get_focused_listing_option_index,
+    get_last_viewed_property_id,
     merge_last_listing_into_capture,
     property_ref_from_listing_choice,
     resolve_listing_choice_row,
     set_focused_listing_option_index,
+    set_last_viewed_property,
     sync_focused_listing_option,
+    user_asks_listing_attribute_followup,
 )
+from app.detail_media import should_enrich_property_detail
 
 _ROW_A = {
     "ID": "10",
@@ -87,3 +91,60 @@ def test_clear_focused_option() -> None:
         set_focused_listing_option_index({}, 1),
     )
     assert get_focused_listing_option_index(capture) is None
+
+
+def test_last_viewed_resolves_post_detail_followup() -> None:
+    from unittest.mock import patch
+
+    capture = {
+        "last_listing": {
+            "ids": ["10", "20"],
+            "branch": "alquiler",
+            "catalog_path": "data/rent.csv",
+        },
+        "last_viewed_property": {
+            "id": "20",
+            "catalog_path": "data/rent.csv",
+            "branch": "alquiler",
+        },
+    }
+
+    def _fake_get_properties(
+        _path: str | None,
+        property_ids: list[str],
+        *,
+        max_items: int = 3,
+    ) -> list[dict]:
+        by_id = {str(r["ID"]): r for r in _ROWS}
+        return [by_id[pid] for pid in property_ids if pid in by_id][:max_items]
+
+    with patch(
+        "app.listing_context.get_properties_by_ids",
+        side_effect=_fake_get_properties,
+    ):
+        row = resolve_listing_choice_row(
+            "cual es el precio de alquiler? aceptan mascotas?",
+            _ROWS,
+            capture_data=capture,
+        )
+    assert row is not None
+    assert row["ID"] == "20"
+
+
+def test_attribute_followup_skips_detail_enrich() -> None:
+    capture = set_last_viewed_property(
+        {},
+        property_id="20",
+        catalog_path="data/rent.csv",
+        branch="alquiler",
+    )
+    assert user_asks_listing_attribute_followup(
+        "cual es el precio de alquiler? aceptan mascotas?"
+    )
+    assert not should_enrich_property_detail(
+        outbound_message="Te dejo la galería completa 👇",
+        current_user_text="cual es el precio de alquiler? aceptan mascotas?",
+        flow_path="alquiler",
+        capture_data=capture,
+    )
+    assert get_last_viewed_property_id(capture) == "20"

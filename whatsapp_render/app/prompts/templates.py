@@ -29,6 +29,7 @@ _LISTING_FOLLOWUP_RULES = """Cuando exista el bloque "OPCIONES MOSTRADAS":
 - Si preguntan por un atributo (patio, pileta, precio, metros, etc.), decilo por cada opción relevante según el bloque; no omitas el dato si está ahí.
 - Si dicen "esa casa", "la primera", "la de Hudson", etc., usá los mensajes recientes del cliente y el bloque para inferir la opción; si queda ambiguo, respondé qué opción(es) cumplen y pedí solo el número de opción.
 - Si el contexto indica una "Opción en foco", asumila para preguntas ambiguas (precio, patio, expensas) hasta que el cliente pida más opciones o nombre otra.
+- Si existe "PROPIEDAD EN DETALLE (contexto activo)", el cliente ya vio esa ficha: respondé sobre esa propiedad sin reenviar otras fichas ni inventar otra dirección.
 - No respondas solo con "¿te interesa alguna?" sin aportar información del bloque cuando la respuesta está en los datos."""
 
 _DEFAULT_MINIMAL_SYSTEM_PROMPT = (

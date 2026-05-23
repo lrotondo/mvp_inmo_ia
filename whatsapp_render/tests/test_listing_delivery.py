@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.catalog import get_properties_by_ids
 from app.listing_delivery import (
+    BotDeliveryResult,
     build_listing_caption,
     consolidate_history_text,
     deliver_bot_response,
@@ -133,7 +134,8 @@ def test_deliver_bot_response_single_text_without_tag() -> None:
                 catalog_csv_path=TENANT_RENT,
             )
             mock_text.assert_awaited_once()
-            assert result == "Hola, ¿en qué te ayudo?"
+            assert isinstance(result, BotDeliveryResult)
+            assert result.text == "Hola, ¿en qué te ayudo?"
 
     asyncio.run(_run())
 
@@ -181,7 +183,8 @@ def test_deliver_bot_response_multi_image_with_tag() -> None:
             )
             assert mock_text.await_count >= 2
             assert mock_image.await_count == 2
-            assert "Opción 1" in result
-            assert "¿Cuál te llama" in result
+            assert isinstance(result, BotDeliveryResult)
+            assert "Opción 1" in result.text
+            assert "¿Cuál te llama" in result.text
 
     asyncio.run(_run())

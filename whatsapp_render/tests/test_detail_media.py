@@ -176,8 +176,10 @@ def test_try_deliver_sends_text_with_links_when_enriched() -> None:
                 property_ref="5",
             )
             assert result is not None
-            assert "Arana" in result
-            assert "Material visual" in result or "álbum" in result.lower() or "Ver" in result
+            text, prop_id = result
+            assert prop_id == "5"
+            assert "Arana" in text
+            assert "Material visual" in text or "álbum" in text.lower() or "Ver" in text
             assert mock_img.await_count == 1
             assert mock_cta.await_count >= 1
             assert mock_txt.await_count == 0

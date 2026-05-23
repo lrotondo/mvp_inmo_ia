@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from app.listing_delivery import deliver_bot_response
+from app.listing_delivery import BotDeliveryResult, deliver_bot_response
 from app.property_ficha import collect_media_link_buttons
 
 TENANT_RENT = "data/tenants/inmobiliaria_cowork_alquiler.csv"
@@ -55,7 +55,9 @@ def test_detail_intent_before_listado_delivery() -> None:
             )
             assert mock_detail.await_count == 1
             mock_list_img.assert_not_awaited()
-            assert "[LISTADO:" not in result
-            assert "Ficha detalle" in result
+            assert isinstance(result, BotDeliveryResult)
+            assert "[LISTADO:" not in result.text
+            assert "Ficha detalle" in result.text
+            assert result.delivered_property_id in ("", "9")
 
     asyncio.run(_run())

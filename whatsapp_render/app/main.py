@@ -20,7 +20,8 @@ from app.meta_auth import (
     validate_meta_signature,
     validate_meta_verify_token,
 )
-from app.listing_delivery import deliver_bot_response
+from app.listing_context import set_last_viewed_property
+from app.listing_delivery import BotDeliveryResult, deliver_bot_response
 from app.meta_client import MetaSendError
 from app.pipeline.inbound import process_inbound_message
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
@@ -563,8 +564,9 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             turn_result.candidate_ids,
         )
 
+        delivery: BotDeliveryResult | None = None
         try:
-            outbound_for_client = await deliver_bot_response(
+            delivery = await deliver_bot_response(
                 access_token=ctx.access_token,
                 phone_number_id=ctx.phone_number_id,
                 to_wa_id=wa_id,
@@ -577,6 +579,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                 property_ref=property_ref,
                 capture_data=turn_result.capture_data or session.capture_data,
             )
+            outbound_for_client = delivery.text
         except MetaSendError as exc:
             logger.error(
                 "WhatsApp no entregado wa_id=%s transient=%s code=%s status=%s: %s",
@@ -598,6 +601,13 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             turn_result.capture_data or dict(session.capture_data),
             outbound_for_client,
         )
+        if delivery is not None and delivery.delivered_property_id:
+            capture_after_turn = set_last_viewed_property(
+                capture_after_turn,
+                property_id=delivery.delivered_property_id,
+                catalog_path=catalog_path_used,
+                branch=flow_path,
+            )
         await asyncio.to_thread(
             save_session,
             ctx.phone_number_id,
