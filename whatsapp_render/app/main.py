@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 
 from app.capture_flow import merge_outbound_capture_flags
+from app.data_reset import clear_operational_chat_tables
 from app.db import dispose_engine, get_engine, init_db
 from app.leads import LeadType, try_register_flow_alert
 from app.session_state import capture_summary_text
@@ -148,6 +149,7 @@ def root() -> dict[str, str]:
         "health": "/health",
         "webhook": "/meta/whatsapp",
         "onboarding_config": "/api/onboarding/config",
+        "reset_chat_data": "/reset-chat-data",
     }
 
 
@@ -159,6 +161,26 @@ def health() -> dict[str, str]:
         "status": "ok",
         "db": "on" if get_engine() is not None else "off",
     }
+
+
+@app.get("/reset-chat-data")
+def reset_chat_data() -> dict[str, Any]:
+    """
+    Vacía chat_messages, chat_sessions, client_leads y client_waitlist.
+    Endpoint público (sin autenticación).
+    """
+    logger.warning("GET /reset-chat-data — borrado de tablas operativas solicitado")
+    if get_engine() is None:
+        raise HTTPException(status_code=503, detail="DATABASE_URL no configurada")
+    try:
+        deleted = clear_operational_chat_tables()
+    except Exception as exc:
+        logger.exception("reset_chat_data falló")
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudieron vaciar las tablas",
+        ) from exc
+    return {"ok": True, "deleted": deleted}
 
 
 def _waitlist_export_secret() -> str:

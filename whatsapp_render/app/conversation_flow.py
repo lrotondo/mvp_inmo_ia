@@ -39,6 +39,8 @@ from app.listing_context import (
     sync_focused_listing_option,
     user_rejects_all_listings,
     user_requests_fresh_listing,
+    user_requests_more_listing_only,
+    user_requests_new_search,
     user_requests_more_photos,
     user_showed_property_selection,
 )
@@ -81,6 +83,8 @@ from app.search_profile import (
     mark_intake_prompt_sent,
     merge_search_profile_into_capture,
     reset_intake_state,
+    reset_search_state,
+    user_changes_property_type,
 )
 from app.waitlist import register_waitlist_entry, summarize_waitlist_requirements
 from app.waitlist_flow import (
@@ -442,7 +446,7 @@ async def _chat_reply(ctx: FlowContext, user_text: str, plan: FlowPlan) -> str:
     listing_rows: list = []
     if plan.catalog_path:
         listing_rows = load_last_listing_rows(plan.catalog_path, ctx.capture_data)
-        if listing_rows:
+        if listing_rows and not user_requests_new_search(user_text):
             branch = plan.profile.branch if plan.profile else ctx.flow_path
             catalog_block = build_listing_catalog_block(listing_rows, branch=branch)
             viewed_row = load_last_viewed_property_row(
@@ -535,7 +539,7 @@ async def _resolve_listing_for_plan(
         catalog_csv_path=plan.catalog_path,
         capture_data=ctx.capture_data,
     )
-    more = shown and user_requests_fresh_listing(user_text)
+    more = shown and user_requests_more_listing_only(user_text)
     exclude = get_shown_listing_ids(ctx.capture_data) if more else []
     mode = "more_options" if more else "initial"
 
@@ -689,6 +693,18 @@ async def handle_turn(
         working_capture = reset_waitlist_state(working_capture)
         working_capture = reset_visit_state(working_capture)
 
+    if flow_path in ("compra", "alquiler") and (user_text or "").strip():
+        if user_requests_new_search(user_text) or user_changes_property_type(
+            user_text,
+            working_capture,
+            flow_path=flow_path,
+        ):
+            working_capture = reset_search_state(working_capture, flow_path=flow_path)
+            logger.info(
+                "search_state_reset flow=%s reason=new_search_or_type_change",
+                flow_path,
+            )
+
     if flow_path in ("compra", "alquiler"):
         if (
             listing_already_shown(
@@ -774,6 +790,8 @@ async def handle_turn(
     if plan.profile and flow_path in ("compra", "alquiler"):
         out_capture = merge_search_profile_into_capture(out_capture, plan.profile)
 
+    skip_property_delivery = plan.phase == Phase.INTAKE
+
     if plan.phase == Phase.INTAKE:
         out_capture = mark_intake_prompt_sent(out_capture)
 
@@ -790,7 +808,7 @@ async def handle_turn(
             branch=flow_path,
             catalog_path=plan.catalog_path,
         )
-    elif plan.phase == Phase.LISTING and user_requests_fresh_listing(user_text):
+    elif plan.phase == Phase.LISTING and user_requests_more_listing_only(user_text):
         out_capture.pop("last_listing", None)
         out_capture = clear_listing_focus_state(out_capture)
 
@@ -815,7 +833,7 @@ async def handle_turn(
             )
 
     if rows and flow_path in ("compra", "alquiler"):
-        if user_requests_fresh_listing(user_text):
+        if user_requests_more_listing_only(user_text):
             out_capture = clear_listing_focus_state(out_capture)
         else:
             out_capture = sync_focused_listing_option(
@@ -829,7 +847,6 @@ async def handle_turn(
     visit_lead_type: str | None = None
     visit_lead_interest_summary = ""
     visit_lead_conversation_summary = ""
-    skip_property_delivery = False
 
     if plan.phase == Phase.WAITLIST_CONFIRM and phone_number_id.strip() and wa_id.strip():
         listing_summary = _listing_summary_for_waitlist(

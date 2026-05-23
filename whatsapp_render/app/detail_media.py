@@ -170,9 +170,12 @@ def should_deliver_property_detail_ficha(
 ) -> bool:
     """Hay fila de catálogo y contexto de detalle / propiedad elegida."""
     from app.prompts.templates import is_visit_confirmation_message
+    from app.listing_context import user_requests_new_search
 
     path = (flow_path or "").strip().lower()
     if is_visit_confirmation_message(outbound_message):
+        return False
+    if user_requests_new_search(current_user_text):
         return False
     if path in ("nuevo", "captacion") or row is None:
         return False
@@ -211,12 +214,15 @@ def should_enrich_property_detail(
     from app.listing_context import (
         get_last_viewed_property_id,
         user_asks_listing_attribute_followup,
+        user_requests_new_search,
     )
 
     path = (flow_path or "").strip().lower()
     if path in ("nuevo", "captacion"):
         return False
     if user_wants_fresh_start(current_user_text):
+        return False
+    if user_requests_new_search(current_user_text):
         return False
     if get_last_viewed_property_id(capture_data) and user_asks_listing_attribute_followup(
         current_user_text

@@ -7,7 +7,11 @@ from typing import Any, Literal
 
 from app.catalog_search import parse_search_criteria
 from app.capture_flow import user_messages_for_flow
-from app.listing_context import user_requests_fresh_listing
+from app.listing_context import (
+    clear_listing_focus_state,
+    property_types_mentioned_in_text,
+    user_requests_new_search,
+)
 from app.prompts.templates import build_intake_bundle_question
 
 _INTAKE_ANSWERED_KEY = "intake_answered"
@@ -80,13 +84,61 @@ def user_declined_zone_preference(user_messages_text: str) -> bool:
     return bool(_NO_DEFINED_ZONE_RE.search(user_messages_text))
 
 
+def reset_search_state(
+    capture_data: dict[str, Any],
+    *,
+    flow_path: str = "",
+) -> dict[str, Any]:
+    """Reinicia intake, listados, ficha anclada, visita y waitlist de búsqueda."""
+    from app.visit_flow import reset_visit_state
+    from app.waitlist_flow import reset_waitlist_state
+
+    merged = reset_intake_state(dict(capture_data))
+    merged = reset_waitlist_state(merged)
+    merged = reset_visit_state(merged)
+    merged = clear_listing_focus_state(merged)
+    merged.pop("last_listing", None)
+    merged.pop("shown_listing_ids", None)
+    merged.pop("search_profile", None)
+
+    branch = (flow_path or "").strip().lower()
+    if branch:
+        raw = merged.get("user_flow_messages")
+        if isinstance(raw, dict) and branch in raw:
+            updated = dict(raw)
+            updated.pop(branch, None)
+            merged["user_flow_messages"] = updated
+
+    return merged
+
+
+def user_changes_property_type(
+    user_text: str,
+    capture_data: dict[str, Any] | None,
+    *,
+    flow_path: str,
+) -> bool:
+    """True si el mensaje pide un tipo distinto al guardado en search_profile."""
+    profile = load_search_profile_from_capture(
+        capture_data or {},
+        branch=flow_path,
+    )
+    if profile is None or not profile.property_types:
+        return False
+    mentioned = property_types_mentioned_in_text(user_text)
+    if not mentioned:
+        return False
+    stored = set(profile.property_types)
+    return bool(mentioned - stored)
+
+
 def is_intake_complete(
     capture_data: dict[str, Any] | None,
     *,
     current_user_text: str = "",
 ) -> bool:
-    if user_requests_fresh_listing((current_user_text or "").strip()):
-        return True
+    if user_requests_new_search((current_user_text or "").strip()):
+        return False
     return get_intake_answered(capture_data)
 
 

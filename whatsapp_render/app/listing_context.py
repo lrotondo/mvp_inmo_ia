@@ -108,6 +108,25 @@ _FRESH_LISTING_RE = re.compile(
     r")\b",
     re.I,
 )
+_NEW_SEARCH_RE = re.compile(
+    r"\b("
+    r"busquemos|buscar|busco|encontremos|encontrar|"
+    r"quiero\s+ver|quiero\s+buscar|mostr(?:ar|ame)|pasame|pas[aá]me"
+    r")\b",
+    re.I,
+)
+_NEW_SEARCH_TYPE_RE = re.compile(
+    r"\b("
+    r"casas?|departamentos?|deptos?|lotes?|terrenos?|duplex|d[uú]plex|ph"
+    r")\b",
+    re.I,
+)
+_TYPE_TO_CANONICAL: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:casas?)\b", re.I), "casa"),
+    (re.compile(r"\b(?:departamentos?|deptos?|ph)\b", re.I), "departamento"),
+    (re.compile(r"\b(?:lotes?|terrenos?)\b", re.I), "lote"),
+    (re.compile(r"\b(?:duplex|d[uú]plex)\b", re.I), "departamento"),
+)
 _LISTING_FOLLOWUP_RE = re.compile(
     r"\b("
     r"tiene|tienen|hay\s+|cu[aá]nto|cu[aá]ntos|cu[aá]l|"
@@ -530,15 +549,49 @@ def user_rejects_all_listings(user_text: str) -> bool:
     return bool(_REJECT_ALL_LISTING_RE.search(text))
 
 
+def property_types_mentioned_in_text(user_text: str) -> set[str]:
+    """Tipos de inmueble mencionados en el mensaje (casa, departamento, lote)."""
+    text = (user_text or "").strip()
+    if not text:
+        return set()
+    found: set[str] = set()
+    for pattern, canonical in _TYPE_TO_CANONICAL:
+        if pattern.search(text):
+            found.add(canonical)
+    return found
+
+
+def user_requests_new_search(user_text: str) -> bool:
+    """
+    Nueva búsqueda (ej. busquemos casas en venta): reinicia intake y no reutiliza listado.
+    """
+    text = (user_text or "").strip()
+    if not text or user_rejects_all_listings(text):
+        return False
+    if not _NEW_SEARCH_RE.search(text):
+        return False
+    return bool(_NEW_SEARCH_TYPE_RE.search(text))
+
+
 def user_requests_fresh_listing(user_text: str) -> bool:
     text = (user_text or "").strip()
     if not text:
         return False
     if user_rejects_all_listings(text):
         return False
+    if user_requests_new_search(text):
+        return True
     if current_message_is_browse_only(text):
         return True
     return bool(_FRESH_LISTING_RE.search(text))
+
+
+def user_requests_more_listing_only(user_text: str) -> bool:
+    """Más opciones sin reiniciar intake (qué tenés, más opciones, etc.)."""
+    text = (user_text or "").strip()
+    if not text or user_requests_new_search(text):
+        return False
+    return user_requests_fresh_listing(text)
 
 
 def user_asks_about_shown_listing(user_text: str) -> bool:
