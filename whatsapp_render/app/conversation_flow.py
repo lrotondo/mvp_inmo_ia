@@ -104,6 +104,7 @@ from app.waitlist_flow import (
     waitlist_message_is_substantive,
 )
 from app.visit_intent import (
+    conversation_bare_me_interesa,
     conversation_requests_human,
     conversation_wants_visit,
     conversation_wants_visit_rent,
@@ -252,10 +253,19 @@ def _listing_index(text: str) -> int | None:
     return None
 
 
-def _wants_visit(flow_path: str, text: str) -> bool:
+def _wants_visit(
+    flow_path: str,
+    text: str,
+    capture_data: dict[str, Any] | None = None,
+) -> bool:
     t = (text or "").strip()
     if not t:
         return False
+    if (
+        get_last_viewed_property_id(capture_data)
+        and conversation_bare_me_interesa(t)
+    ):
+        return True
     if conversation_requests_human(t):
         return True
     if flow_path == "alquiler":
@@ -771,7 +781,7 @@ async def handle_turn(
             working_capture = mark_visit_answered(working_capture, user_text)
 
         if (
-            _wants_visit(flow_path, user_text)
+            _wants_visit(flow_path, user_text, working_capture)
             and not get_visit_pending(working_capture)
             and get_intake_answered(working_capture)
             and not get_waitlist_pending(working_capture)

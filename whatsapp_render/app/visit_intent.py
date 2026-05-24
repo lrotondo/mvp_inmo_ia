@@ -30,6 +30,15 @@ _HUMAN_CONTACT_RE = re.compile(
     re.I,
 )
 
+_BARE_ME_INTERESA_RE = re.compile(
+    r"^\s*me\s+interesa[\s!.?]*$",
+    re.I,
+)
+
+
+def conversation_bare_me_interesa(text: str) -> bool:
+    return bool(_BARE_ME_INTERESA_RE.match((text or "").strip()))
+
 
 def conversation_wants_visit(conversation_text: str) -> bool:
     return bool(_VISIT_RE.search(conversation_text))
