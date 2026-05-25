@@ -27,6 +27,7 @@ class Tenant(Base):
     onboarding_error = mapped_column(Text, nullable=True)
     connected_at = mapped_column(DateTime(timezone=True), nullable=True)
     token_expires_at = mapped_column(DateTime(timezone=True), nullable=True)
+    platform_tenant_id = mapped_column(Integer, nullable=True, index=True)
 
 
 class OnboardingSession(Base):
@@ -39,6 +40,7 @@ class OnboardingSession(Base):
     phone_number_id = mapped_column(String(64), nullable=True, index=True)
     business_portfolio_id = mapped_column(String(64), nullable=True)
     tenant_id = mapped_column(Integer, nullable=True)
+    platform_tenant_id = mapped_column(Integer, nullable=True, index=True)
     error_message = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

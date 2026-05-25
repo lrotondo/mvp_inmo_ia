@@ -18,10 +18,12 @@ CREATE TABLE IF NOT EXISTS tenants (
     onboarding_error TEXT NULL,
     connected_at DATETIME(6) NULL,
     token_expires_at DATETIME(6) NULL,
+    platform_tenant_id INT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_tenants_phone_number_id (phone_number_id),
     KEY ix_tenants_phone_number_id (phone_number_id),
-    KEY ix_tenants_waba_id (waba_id)
+    KEY ix_tenants_waba_id (waba_id),
+    KEY ix_tenants_platform_tenant_id (platform_tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS onboarding_sessions (
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     phone_number_id VARCHAR(64) NULL,
     business_portfolio_id VARCHAR(64) NULL,
     tenant_id INT NULL,
+    platform_tenant_id INT NULL,
     error_message TEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -39,6 +42,7 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     UNIQUE KEY uq_onboarding_sessions_invite_token (invite_token),
     KEY ix_onboarding_sessions_waba_id (waba_id),
     KEY ix_onboarding_sessions_phone_number_id (phone_number_id),
+    KEY ix_onboarding_sessions_platform_tenant_id (platform_tenant_id),
     CONSTRAINT fk_onboarding_sessions_tenant FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

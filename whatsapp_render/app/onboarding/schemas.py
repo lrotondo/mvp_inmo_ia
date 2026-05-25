@@ -11,11 +11,12 @@ class OnboardingConfigResponse(BaseModel):
 
 
 class SessionEventRequest(BaseModel):
-    waba_id: str = Field(..., min_length=1)
+    waba_id: str | None = None
     phone_number_id: str | None = None
     business_portfolio_id: str | None = None
     event: str | None = None
     invite_token: str | None = None
+    platform_tenant_id: int | None = None
 
 
 class OnboardingSessionResponse(BaseModel):
@@ -24,11 +25,13 @@ class OnboardingSessionResponse(BaseModel):
     phone_number_id: str | None = None
     status: str
     error_message: str | None = None
+    platform_tenant_id: int | None = None
+    business_portfolio_id: str | None = None
 
 
 class CompleteOnboardingRequest(BaseModel):
     code: str = Field(..., min_length=1)
-    waba_id: str = Field(..., min_length=1)
+    waba_id: str | None = None
     phone_number_id: str | None = None
     business_portfolio_id: str | None = None
     event: str | None = None
@@ -37,6 +40,7 @@ class CompleteOnboardingRequest(BaseModel):
     skip_register: bool = False
     catalog_csv_path: str | None = None
     catalog_rent_csv_path: str | None = None
+    platform_tenant_id: int | None = None
 
 
 class CompleteOnboardingResponse(BaseModel):
@@ -46,6 +50,7 @@ class CompleteOnboardingResponse(BaseModel):
     waba_id: str
     display_phone: str | None = None
     onboarding_status: str
+    platform_tenant_id: int | None = None
 
 
 class TenantStatusResponse(BaseModel):
@@ -58,6 +63,7 @@ class TenantStatusResponse(BaseModel):
     connected_at: str | None
     catalog_csv_path: str | None
     catalog_rent_csv_path: str | None
+    platform_tenant_id: int | None = None
 
 
 class TenantConfigPatch(BaseModel):
