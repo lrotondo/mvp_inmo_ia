@@ -208,7 +208,7 @@ def get_pending_onboarding_session_response(
 
 def _resolve_assets_from_pending(
     body: CompleteOnboardingRequest,
-    pending: OnboardingSession | None,
+    pending: OnboardingSessionResponse | None,
 ) -> tuple[str, str, str | None, int | None]:
     waba_id = normalize_waba_id(body.waba_id)
     phone_number_id = (body.phone_number_id or "").strip()
@@ -230,12 +230,13 @@ def _resolve_assets_from_pending(
 
 async def complete_onboarding(body: CompleteOnboardingRequest) -> CompleteOnboardingResponse:
     with session_scope() as session:
-        pending = get_pending_onboarding_session(
+        pending_row = get_pending_onboarding_session(
             session,
             platform_tenant_id=body.platform_tenant_id,
             waba_id=body.waba_id,
             phone_number_id=body.phone_number_id,
         )
+        pending = _session_to_response(pending_row) if pending_row else None
 
     waba_id, phone_number_id, business_portfolio_id, platform_id = _resolve_assets_from_pending(
         body, pending

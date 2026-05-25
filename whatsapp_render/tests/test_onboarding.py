@@ -365,6 +365,9 @@ def test_get_pending_ignores_invalid_waba_app_id() -> None:
 
 def test_complete_without_waba_uses_pending_session() -> None:
     pending = MagicMock()
+    pending.id = 1
+    pending.status = "assets_received"
+    pending.error_message = None
     pending.waba_id = "WABA_PENDING"
     pending.phone_number_id = "PN_PENDING"
     pending.business_portfolio_id = "BP1"
