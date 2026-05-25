@@ -73,8 +73,13 @@ Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compa
 
 - `GET /api/onboarding/config` — público (`app_id`, `config_id`)
 - `POST /api/onboarding/session-event` — Bearer `ONBOARDING_API_SECRET` (`phone_number_id` opcional)
-- `GET /api/onboarding/session?waba_id=` — Bearer (sesión con phone resuelto por webhook)
-- `POST /api/onboarding/complete` — Bearer (`phone_number_id` opcional; se resuelve tras el `code`)
+- `GET /api/onboarding/session?waba_id=` — Bearer (sesión por WABA)
+- `GET /api/onboarding/session/pending?platform_tenant_id=` — Bearer (sesión `assets_received` del webhook; usa si el popup no envió WABA)
+- `POST /api/onboarding/complete` — Bearer (`waba_id` y `phone_number_id` opcionales; resuelve desde sesión pendiente + `code`)
+
+Panel: abrir con `?platform_tenant_id=N` (ID inmobiliaria en Espacios360). `onboarding_sessions.tenant_id` es FK al `tenants.id` del **bot** (se llena al completar `/complete`); `platform_tenant_id` es el ID externo Espacios360.
+
+Migración MySQL existente: [`migrations/mysql/002_platform_tenant_id.sql`](migrations/mysql/002_platform_tenant_id.sql).
 - `GET /api/onboarding/status/{tenant_id}` — Bearer
 - `PATCH /api/onboarding/tenants/{tenant_id}` — Bearer (catálogo, nombre, prompt)
 

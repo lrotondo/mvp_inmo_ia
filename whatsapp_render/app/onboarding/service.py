@@ -119,6 +119,10 @@ def record_session_event(body: SessionEventRequest) -> int:
     waba_id = normalize_waba_id(body.waba_id)
     phone = (body.phone_number_id or "").strip()
     platform_id = body.platform_tenant_id
+    if not waba_id and not phone and platform_id is None:
+        raise ValueError(
+            "session-event requiere waba_id, phone_number_id o platform_tenant_id"
+        )
     with session_scope() as session:
         row: OnboardingSession | None = None
         if body.invite_token:

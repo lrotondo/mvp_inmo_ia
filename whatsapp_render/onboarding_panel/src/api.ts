@@ -26,7 +26,7 @@ export async function fetchConfig(): Promise<OnboardingConfig> {
 }
 
 export type EmbeddedAssets = {
-  waba_id: string;
+  waba_id?: string;
   phone_number_id?: string;
   business_portfolio_id?: string;
   event?: string;
@@ -38,6 +38,8 @@ export type OnboardingSession = {
   phone_number_id: string | null;
   status: string;
   error_message?: string | null;
+  platform_tenant_id?: number | null;
+  business_portfolio_id?: string | null;
 };
 
 export async function fetchSessionByWaba(wabaId: string): Promise<OnboardingSession | null> {
@@ -53,11 +55,44 @@ export async function fetchSessionByWaba(wabaId: string): Promise<OnboardingSess
   return res.json();
 }
 
-export async function postSessionEvent(assets: EmbeddedAssets): Promise<void> {
+export async function fetchPendingSession(
+  platformTenantId: number | null,
+  opts?: { wabaId?: string; phoneNumberId?: string },
+): Promise<OnboardingSession | null> {
+  const params = new URLSearchParams();
+  if (platformTenantId != null) {
+    params.set("platform_tenant_id", String(platformTenantId));
+  }
+  if (opts?.wabaId) {
+    params.set("waba_id", opts.wabaId);
+  }
+  if (opts?.phoneNumberId) {
+    params.set("phone_number_id", opts.phoneNumberId);
+  }
+  const res = await fetch(
+    `${API_BASE}/api/onboarding/session/pending?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `session/pending: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function postSessionEvent(
+  assets: EmbeddedAssets,
+  platformTenantId: number | null,
+): Promise<void> {
+  const body: Record<string, unknown> = { ...assets };
+  if (platformTenantId != null) {
+    body.platform_tenant_id = platformTenantId;
+  }
   const res = await fetch(`${API_BASE}/api/onboarding/session-event`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify(assets),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -67,13 +102,14 @@ export async function postSessionEvent(assets: EmbeddedAssets): Promise<void> {
 
 export type CompletePayload = {
   code: string;
-  waba_id: string;
+  waba_id?: string;
   phone_number_id?: string;
   business_portfolio_id?: string;
   event?: string;
   name?: string;
   catalog_csv_path?: string;
   catalog_rent_csv_path?: string;
+  platform_tenant_id?: number;
 };
 
 export type CompleteResult = {
@@ -83,6 +119,7 @@ export type CompleteResult = {
   waba_id: string;
   display_phone?: string;
   onboarding_status: string;
+  platform_tenant_id?: number | null;
 };
 
 export async function postComplete(body: CompletePayload): Promise<CompleteResult> {

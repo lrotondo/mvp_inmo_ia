@@ -12,6 +12,7 @@ from app.meta_graph import (
     resolve_phone_number_id_for_waba,
     system_user_access_token,
 )
+from app.onboarding.ids import normalize_waba_id
 from app.models import OnboardingSession, Tenant
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ async def process_account_update_webhook(payload: dict[str, Any]) -> int:
     for value, entry_id in raw_updates:
         fields = normalize_account_update_fields(value, entry_id)
         event = fields["event"] or ""
-        waba_id = fields["waba_id"] or ""
+        waba_id = normalize_waba_id(fields["waba_id"] or "")
         phone_number_id = fields["phone_number_id"] or ""
         business_id = fields["business_portfolio_id"]
 

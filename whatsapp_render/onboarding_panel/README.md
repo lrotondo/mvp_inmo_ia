@@ -30,9 +30,11 @@ Servir `dist/` en HTTPS (Vercel, Netlify, S3+CloudFront, etc.). Agregar ese domi
 
 ## Flujo
 
-1. Botón abre Embedded Signup (popup Meta).
-2. Listener `WA_EMBEDDED_SIGNUP` guarda `waba_id` y `phone_number_id` vía `POST /api/onboarding/session-event`.
-3. Callback `FB.login` envía el `code` a `POST /api/onboarding/complete`.
-4. Paso 2: formulario de catálogo → `PATCH /api/onboarding/tenants/{id}`.
+1. Abrir el panel con el ID de inmobiliaria en la URL, por ejemplo:  
+   `https://panel.tudominio.com/?platform_tenant_id=1`
+2. Botón abre Embedded Signup (popup Meta).
+3. Listener `WA_EMBEDDED_SIGNUP` (si llega) + webhook `account_update` en el backend guardan la sesión.
+4. Callback `FB.login` envía el `code` a `POST /api/onboarding/complete`. Si el popup no trajo WABA, el panel consulta `GET /api/onboarding/session/pending?platform_tenant_id=...`.
+5. Paso 2: formulario de catálogo → `PATCH /api/onboarding/tenants/{id}` (`tenant_id` en la respuesta es el ID del bot en MySQL, no el de la URL).
 
 Ver también [`docs/META_TECH_PROVIDER.md`](../docs/META_TECH_PROVIDER.md).

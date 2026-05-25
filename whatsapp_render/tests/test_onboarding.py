@@ -299,3 +299,127 @@ def test_complete_onboarding_resolves_phone_from_waba() -> None:
 
     assert result.phone_number_id == "PN_FROM_GRAPH"
     assert result.tenant_id == 42
+
+
+def test_get_pending_onboarding_session_prefers_platform_tenant() -> None:
+    from app.onboarding.service import get_pending_onboarding_session
+
+    row_a = MagicMock()
+    row_a.id = 1
+    row_a.status = "assets_received"
+    row_a.tenant_id = None
+    row_a.platform_tenant_id = 2
+    row_a.waba_id = "WABA_A"
+    row_a.phone_number_id = "P1"
+    row_a.business_portfolio_id = None
+    row_a.updated_at = 1
+
+    row_b = MagicMock()
+    row_b.id = 2
+    row_b.status = "assets_received"
+    row_b.tenant_id = None
+    row_b.platform_tenant_id = 1
+    row_b.waba_id = "WABA_B"
+    row_b.phone_number_id = "P2"
+    row_b.business_portfolio_id = None
+    row_b.updated_at = 2
+
+    mock_session = MagicMock()
+    mock_session.scalars.return_value.all.return_value = [row_b, row_a]
+
+    with patch.dict(os.environ, {"META_APP_ID": "APPID"}, clear=False):
+        picked = get_pending_onboarding_session(mock_session, platform_tenant_id=1)
+
+    assert picked is row_b
+
+
+def test_get_pending_ignores_invalid_waba_app_id() -> None:
+    from app.onboarding.service import get_pending_onboarding_session
+
+    bad = MagicMock()
+    bad.id = 1
+    bad.status = "assets_received"
+    bad.tenant_id = None
+    bad.platform_tenant_id = None
+    bad.waba_id = "APPID"
+    bad.phone_number_id = None
+    bad.business_portfolio_id = None
+
+    good = MagicMock()
+    good.id = 2
+    good.status = "assets_received"
+    good.tenant_id = None
+    good.platform_tenant_id = None
+    good.waba_id = "WABA_OK"
+    good.phone_number_id = "P9"
+    good.business_portfolio_id = None
+
+    mock_session = MagicMock()
+    mock_session.scalars.return_value.all.return_value = [bad, good]
+
+    with patch.dict(os.environ, {"META_APP_ID": "APPID"}, clear=False):
+        picked = get_pending_onboarding_session(mock_session)
+
+    assert picked is good
+
+
+def test_complete_without_waba_uses_pending_session() -> None:
+    pending = MagicMock()
+    pending.waba_id = "WABA_PENDING"
+    pending.phone_number_id = "PN_PENDING"
+    pending.business_portfolio_id = "BP1"
+    pending.platform_tenant_id = 7
+
+    with (
+        patch(
+            "app.onboarding.service.get_pending_onboarding_session",
+            return_value=pending,
+        ),
+        patch(
+            "app.onboarding.service.exchange_code_for_business_token",
+            new_callable=AsyncMock,
+            return_value="biz-token",
+        ),
+        patch(
+            "app.onboarding.service.subscribe_waba_webhooks",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.onboarding.service.register_phone_number",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.onboarding.service.get_phone_number_display",
+            new_callable=AsyncMock,
+            return_value="+54911",
+        ),
+        patch("app.onboarding.service.session_scope") as mock_scope,
+        patch(
+            "app.onboarding.service.get_tenant_by_phone_number_id",
+            return_value=None,
+        ),
+    ):
+        mock_session = MagicMock()
+        mock_scope.return_value.__enter__.return_value = mock_session
+        mock_session.scalars.return_value.all.return_value = []
+
+        def _assign_tenant_id(obj: object) -> None:
+            obj.id = 99  # type: ignore[attr-defined]
+
+        mock_session.add.side_effect = _assign_tenant_id
+
+        from app.onboarding.service import complete_onboarding
+
+        result = asyncio.run(
+            complete_onboarding(
+                CompleteOnboardingRequest(
+                    code="c",
+                    platform_tenant_id=7,
+                ),
+            )
+        )
+
+    assert result.waba_id == "WABA_PENDING"
+    assert result.phone_number_id == "PN_PENDING"
+    assert result.platform_tenant_id == 7
+    assert result.tenant_id == 99

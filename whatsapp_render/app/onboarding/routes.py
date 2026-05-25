@@ -20,6 +20,7 @@ from app.onboarding.service import (
     complete_onboarding,
     create_invite_session,
     get_onboarding_session_by_waba,
+    get_pending_onboarding_session_response,
     get_tenant_status,
     patch_tenant_config,
     record_session_event,
@@ -38,6 +39,28 @@ def onboarding_config() -> OnboardingConfigResponse:
         graph_version=graph_version(),
         configured=bool(app_id and config_id),
     )
+
+
+@router.get(
+    "/session/pending",
+    response_model=OnboardingSessionResponse,
+    dependencies=[Depends(require_onboarding_bearer)],
+)
+def onboarding_get_pending_session(
+    platform_tenant_id: int | None = Query(None),
+    waba_id: str | None = Query(None),
+    phone_number_id: str | None = Query(None),
+) -> OnboardingSessionResponse:
+    if get_engine() is None:
+        raise HTTPException(status_code=503, detail="DATABASE_URL no configurada")
+    row = get_pending_onboarding_session_response(
+        platform_tenant_id=platform_tenant_id,
+        waba_id=waba_id,
+        phone_number_id=phone_number_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Sesión pendiente no encontrada")
+    return row
 
 
 @router.get(
@@ -63,7 +86,10 @@ def onboarding_get_session(
 def onboarding_session_event(body: SessionEventRequest) -> dict[str, int | str]:
     if get_engine() is None:
         raise HTTPException(status_code=503, detail="DATABASE_URL no configurada")
-    session_id = record_session_event(body)
+    try:
+        session_id = record_session_event(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "session_id": session_id}
 
 
