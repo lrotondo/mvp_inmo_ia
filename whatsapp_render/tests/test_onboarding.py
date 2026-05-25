@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.meta_graph import pick_default_phone_number_id
 from app.onboarding.account_update import (
     _extract_account_updates,
+    normalize_account_update_fields,
     process_account_update_webhook,
 )
 from app.onboarding.schemas import CompleteOnboardingRequest
@@ -80,7 +83,39 @@ def test_complete_success() -> None:
     assert res.json()["tenant_id"] == 7
 
 
-def test_extract_account_updates() -> None:
+def test_complete_without_phone_id_in_body() -> None:
+    from app.onboarding.schemas import CompleteOnboardingResponse
+
+    fake_result = CompleteOnboardingResponse(
+        ok=True,
+        tenant_id=8,
+        phone_number_id="777",
+        waba_id="888",
+        display_phone="+54911",
+        onboarding_status="connected",
+    )
+
+    with patch.dict(os.environ, {"ONBOARDING_API_SECRET": "secret-test"}, clear=False):
+        with patch("app.onboarding.routes.get_engine", return_value=MagicMock()):
+            with patch(
+                "app.onboarding.routes.complete_onboarding",
+                new_callable=AsyncMock,
+                return_value=fake_result,
+            ):
+                client = TestClient(app)
+                res = client.post(
+                    "/api/onboarding/complete",
+                    headers={"Authorization": "Bearer secret-test"},
+                    json={
+                        "code": "SHORT_CODE",
+                        "waba_id": "888",
+                    },
+                )
+    assert res.status_code == 200
+    assert res.json()["phone_number_id"] == "777"
+
+
+def test_extract_account_updates_legacy_flat() -> None:
     payload = {
         "object": "whatsapp_business_account",
         "entry": [
@@ -100,8 +135,32 @@ def test_extract_account_updates() -> None:
     }
     updates = _extract_account_updates(payload)
     assert len(updates) == 1
-    assert updates[0]["waba_id"] == "WABA123"
-    assert updates[0]["phone_number_id"] == "PN456"
+    value, entry_id = updates[0]
+    fields = normalize_account_update_fields(value, entry_id)
+    assert fields["waba_id"] == "WABA123"
+    assert fields["phone_number_id"] == "PN456"
+
+
+def test_normalize_partner_app_installed_waba_info() -> None:
+    value = {
+        "event": "PARTNER_APP_INSTALLED",
+        "waba_info": {
+            "waba_id": "WABA_REAL",
+            "owner_business_id": "PORTFOLIO99",
+        },
+    }
+    fields = normalize_account_update_fields(value, "PORTFOLIO99")
+    assert fields["waba_id"] == "WABA_REAL"
+    assert fields["phone_number_id"] == ""
+    assert fields["business_portfolio_id"] == "PORTFOLIO99"
+
+
+def test_pick_default_phone_number_id_prefers_verified() -> None:
+    rows = [
+        {"id": "1", "code_verification_status": "NOT_VERIFIED"},
+        {"id": "2", "code_verification_status": "VERIFIED"},
+    ]
+    assert pick_default_phone_number_id(rows) == "2"
 
 
 def test_process_account_update_no_db() -> None:
@@ -120,8 +179,61 @@ def test_process_account_update_no_db() -> None:
     }
     with patch("app.onboarding.account_update.session_scope") as mock_scope:
         mock_scope.side_effect = RuntimeError("no db")
-        count = process_account_update_webhook(payload)
+        count = asyncio.run(process_account_update_webhook(payload))
     assert count == 0
+
+
+def test_process_account_update_fetches_phone() -> None:
+    payload = {
+        "entry": [
+            {
+                "id": "PORT1",
+                "changes": [
+                    {
+                        "field": "account_update",
+                        "value": {
+                            "event": "PARTNER_APP_INSTALLED",
+                            "waba_info": {
+                                "waba_id": "WABA99",
+                                "owner_business_id": "PORT1",
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    stored: list = []
+
+    def _capture_add(obj: object) -> None:
+        stored.append(obj)
+
+    mock_session = MagicMock()
+    mock_session.scalars.return_value.first.return_value = None
+    mock_session.add.side_effect = _capture_add
+
+    resolve_mock = AsyncMock(return_value="PN_RESOLVED")
+
+    with (
+        patch(
+            "app.onboarding.account_update.resolve_phone_number_id_for_waba",
+            resolve_mock,
+        ),
+        patch.dict(
+            os.environ,
+            {"META_SYSTEM_USER_ACCESS_TOKEN": "sys-token"},
+            clear=False,
+        ),
+        patch("app.onboarding.account_update.session_scope") as mock_scope,
+    ):
+        mock_scope.return_value.__enter__.return_value = mock_session
+        count = asyncio.run(process_account_update_webhook(payload))
+
+    assert count == 1
+    resolve_mock.assert_awaited_once_with("WABA99", "sys-token")
+    assert len(stored) == 1
+    assert stored[0].phone_number_id == "PN_RESOLVED"
+    assert stored[0].waba_id == "WABA99"
 
 
 def test_complete_onboarding_request_schema() -> None:
@@ -132,3 +244,58 @@ def test_complete_onboarding_request_schema() -> None:
         pin="123456",
     )
     assert body.pin == "123456"
+
+    body_no_phone = CompleteOnboardingRequest(code="abc", waba_id="1")
+    assert body_no_phone.phone_number_id is None
+
+
+def test_complete_onboarding_resolves_phone_from_waba() -> None:
+    with (
+        patch(
+            "app.onboarding.service.exchange_code_for_business_token",
+            new_callable=AsyncMock,
+            return_value="biz-token",
+        ),
+        patch(
+            "app.onboarding.service.resolve_phone_number_id_for_waba",
+            new_callable=AsyncMock,
+            return_value="PN_FROM_GRAPH",
+        ),
+        patch(
+            "app.onboarding.service.subscribe_waba_webhooks",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.onboarding.service.register_phone_number",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.onboarding.service.get_phone_number_display",
+            new_callable=AsyncMock,
+            return_value="+54911",
+        ),
+        patch("app.onboarding.service.session_scope") as mock_scope,
+        patch(
+            "app.onboarding.service.get_tenant_by_phone_number_id",
+            return_value=None,
+        ),
+    ):
+        mock_session = MagicMock()
+        mock_scope.return_value.__enter__.return_value = mock_session
+        mock_session.scalars.return_value.all.return_value = []
+
+        def _assign_tenant_id(obj: object) -> None:
+            obj.id = 42  # type: ignore[attr-defined]
+
+        mock_session.add.side_effect = _assign_tenant_id
+
+        from app.onboarding.service import complete_onboarding
+
+        result = asyncio.run(
+            complete_onboarding(
+                CompleteOnboardingRequest(code="c", waba_id="W1"),
+            )
+        )
+
+    assert result.phone_number_id == "PN_FROM_GRAPH"
+    assert result.tenant_id == 42

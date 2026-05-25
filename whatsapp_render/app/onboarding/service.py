@@ -14,12 +14,14 @@ from app.meta_graph import (
     exchange_code_for_business_token,
     get_phone_number_display,
     register_phone_number,
+    resolve_phone_number_id_for_waba,
     subscribe_waba_webhooks,
 )
 from app.models import OnboardingSession, Tenant
 from app.onboarding.schemas import (
     CompleteOnboardingRequest,
     CompleteOnboardingResponse,
+    OnboardingSessionResponse,
     SessionEventRequest,
     TenantStatusResponse,
 )
@@ -48,6 +50,8 @@ def _generate_pin() -> str:
 
 
 def record_session_event(body: SessionEventRequest) -> int:
+    waba_id = body.waba_id.strip()
+    phone = (body.phone_number_id or "").strip()
     with session_scope() as session:
         row: OnboardingSession | None = None
         if body.invite_token:
@@ -56,10 +60,16 @@ def record_session_event(body: SessionEventRequest) -> int:
                     OnboardingSession.invite_token == body.invite_token.strip()
                 )
             ).first()
-        if row is None:
+        if row is None and phone:
             row = session.scalars(
                 select(OnboardingSession)
-                .where(OnboardingSession.phone_number_id == body.phone_number_id.strip())
+                .where(OnboardingSession.phone_number_id == phone)
+                .order_by(OnboardingSession.id.desc())
+            ).first()
+        if row is None and waba_id:
+            row = session.scalars(
+                select(OnboardingSession)
+                .where(OnboardingSession.waba_id == waba_id)
                 .order_by(OnboardingSession.id.desc())
             ).first()
         if row is None:
@@ -68,25 +78,56 @@ def record_session_event(body: SessionEventRequest) -> int:
                 status="assets_received",
             )
             session.add(row)
-        row.waba_id = body.waba_id.strip()
-        row.phone_number_id = body.phone_number_id.strip()
+        row.waba_id = waba_id
+        if phone:
+            row.phone_number_id = phone
+            row.error_message = None
         if body.business_portfolio_id:
             row.business_portfolio_id = body.business_portfolio_id.strip()
         row.status = "assets_received"
-        row.error_message = None
         session.flush()
         return int(row.id)
 
 
+def get_onboarding_session_by_waba(waba_id: str) -> OnboardingSessionResponse | None:
+    wid = (waba_id or "").strip()
+    if not wid:
+        return None
+    with session_scope() as session:
+        row = session.scalars(
+            select(OnboardingSession)
+            .where(OnboardingSession.waba_id == wid)
+            .order_by(OnboardingSession.id.desc())
+        ).first()
+        if row is None:
+            return None
+        return OnboardingSessionResponse(
+            session_id=int(row.id),
+            waba_id=row.waba_id,
+            phone_number_id=row.phone_number_id,
+            status=row.status,
+            error_message=row.error_message,
+        )
+
+
 async def complete_onboarding(body: CompleteOnboardingRequest) -> CompleteOnboardingResponse:
     waba_id = body.waba_id.strip()
-    phone_number_id = body.phone_number_id.strip()
+    phone_number_id = (body.phone_number_id or "").strip()
     business_portfolio_id = (body.business_portfolio_id or "").strip() or None
     name = (body.name or "").strip() or None
     pin = (body.pin or "").strip() or _generate_pin()
 
     try:
         business_token = await exchange_code_for_business_token(body.code)
+        if not phone_number_id and waba_id:
+            phone_number_id = (
+                await resolve_phone_number_id_for_waba(waba_id, business_token) or ""
+            )
+        if not phone_number_id:
+            raise MetaGraphError(
+                "El WABA no tiene números registrados; agregá un teléfono en Meta "
+                "Business Suite y volvé a conectar."
+            )
         await subscribe_waba_webhooks(waba_id, business_token)
         if not body.skip_register:
             await register_phone_number(phone_number_id, business_token, pin)
@@ -137,14 +178,22 @@ async def complete_onboarding(body: CompleteOnboardingRequest) -> CompleteOnboar
         session.flush()
         tenant_id = int(tenant.id)
 
-        sessions = session.scalars(
+        sessions_by_phone = session.scalars(
             select(OnboardingSession).where(
                 OnboardingSession.phone_number_id == phone_number_id
             )
         ).all()
-        for sess in sessions:
+        sessions_by_waba = session.scalars(
+            select(OnboardingSession).where(OnboardingSession.waba_id == waba_id)
+        ).all()
+        seen_ids: set[int] = set()
+        for sess in list(sessions_by_phone) + list(sessions_by_waba):
+            if sess.id in seen_ids:
+                continue
+            seen_ids.add(int(sess.id))
             sess.status = ONBOARDING_STATUS_CONNECTED
             sess.tenant_id = tenant_id
+            sess.phone_number_id = phone_number_id
             sess.error_message = None
 
     logger.info(
@@ -166,15 +215,33 @@ async def complete_onboarding(body: CompleteOnboardingRequest) -> CompleteOnboar
 def _mark_failed(waba_id: str, phone_number_id: str, error: str) -> None:
     try:
         with session_scope() as session:
-            tenant = get_tenant_by_phone_number_id(session, phone_number_id)
+            tenant = None
+            if phone_number_id:
+                tenant = get_tenant_by_phone_number_id(session, phone_number_id)
+            if tenant is None and waba_id:
+                tenant = session.scalars(
+                    select(Tenant).where(Tenant.waba_id == waba_id)
+                ).first()
             if tenant is not None:
                 tenant.onboarding_status = ONBOARDING_STATUS_FAILED
                 tenant.onboarding_error = error[:2000]
-            sessions = session.scalars(
-                select(OnboardingSession).where(
-                    OnboardingSession.phone_number_id == phone_number_id
+            sessions: list[OnboardingSession] = []
+            if phone_number_id:
+                sessions = list(
+                    session.scalars(
+                        select(OnboardingSession).where(
+                            OnboardingSession.phone_number_id == phone_number_id
+                        )
+                    ).all()
                 )
-            ).all()
+            elif waba_id:
+                sessions = list(
+                    session.scalars(
+                        select(OnboardingSession).where(
+                            OnboardingSession.waba_id == waba_id
+                        )
+                    ).all()
+                )
             for sess in sessions:
                 sess.status = ONBOARDING_STATUS_FAILED
                 sess.error_message = error[:2000]

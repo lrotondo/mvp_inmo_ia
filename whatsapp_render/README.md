@@ -45,6 +45,7 @@ Servicio para responder WhatsApp con un solo backend:
 | `ONBOARDING_CORS_ORIGINS` | onboarding | Orígenes del panel separado, separados por coma (HTTPS) |
 | `ONBOARDING_DEFAULT_CATALOG_SALE_PATH` | no | Catálogo venta por defecto tras conectar |
 | `ONBOARDING_DEFAULT_CATALOG_RENT_PATH` | no | Catálogo alquiler por defecto tras conectar |
+| `META_SYSTEM_USER_ACCESS_TOKEN` | onboarding | System User con `whatsapp_business_management` (Advanced); resuelve `phone_number_id` en webhook `PARTNER_APP_INSTALLED` vía `GET /{waba_id}/phone_numbers` |
 
 ## Embedded Signup (Tech Provider)
 
@@ -62,8 +63,8 @@ Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compa
 ### Flujo
 
 1. Inmobiliaria abre el panel → **Conectar con Facebook/WhatsApp** (`FB.login` + Embedded Signup v4).
-2. Meta devuelve `code` (30 s) + `waba_id` / `phone_number_id` (evento `WA_EMBEDDED_SIGNUP`).
-3. Backend: intercambia código → token, suscribe webhooks al WABA, registra número, guarda fila en `tenants`.
+2. Meta devuelve `code` (30 s) + `waba_id` (y a veces `phone_number_id` en `WA_EMBEDDED_SIGNUP`; en `PARTNER_APP_INSTALLED` el webhook suele traer solo `waba_info`).
+3. Backend: si falta `phone_number_id`, lo obtiene con Graph `GET /{waba_id}/phone_numbers` (webhook con System User; `/complete` con el token del cliente). Luego intercambia código → token, suscribe webhooks, registra número, guarda fila en `tenants`.
 4. Paso 2 en panel: URLs de catálogo venta/alquiler.
 
 **Desarrollo / un solo cliente:** seguir usando [`seed_tenant`](app/seed_tenant.py) (`onboarding_status=manual`).
@@ -71,8 +72,9 @@ Onboarding **self-service** para inmobiliarias: popup oficial de Meta, sin compa
 ### Endpoints API (panel)
 
 - `GET /api/onboarding/config` — público (`app_id`, `config_id`)
-- `POST /api/onboarding/session-event` — Bearer `ONBOARDING_API_SECRET`
-- `POST /api/onboarding/complete` — Bearer
+- `POST /api/onboarding/session-event` — Bearer `ONBOARDING_API_SECRET` (`phone_number_id` opcional)
+- `GET /api/onboarding/session?waba_id=` — Bearer (sesión con phone resuelto por webhook)
+- `POST /api/onboarding/complete` — Bearer (`phone_number_id` opcional; se resuelve tras el `code`)
 - `GET /api/onboarding/status/{tenant_id}` — Bearer
 - `PATCH /api/onboarding/tenants/{tenant_id}` — Bearer (catálogo, nombre, prompt)
 

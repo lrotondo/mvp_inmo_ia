@@ -59,9 +59,12 @@ META_APP_ID=
 META_EMBEDDED_SIGNUP_CONFIG_ID=
 META_APP_SECRET=          # ya existente
 META_VERIFY_TOKEN=        # ya existente
+META_SYSTEM_USER_ACCESS_TOKEN=  # System User con whatsapp_business_management (Advanced)
 ONBOARDING_API_SECRET=    # secreto panel → API (Bearer)
 ONBOARDING_CORS_ORIGINS=https://panel.tudominio.com
 ```
+
+`META_SYSTEM_USER_ACCESS_TOKEN` permite que el webhook `account_update` (`PARTNER_APP_INSTALLED`) liste números con `GET /{waba_id}/phone_numbers` cuando Meta no envía `phone_number_id` en el payload.
 
 ## 7. Panel frontend
 

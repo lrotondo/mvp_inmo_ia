@@ -492,10 +492,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         payload.get("object"),
     )
 
-    account_updates = await asyncio.to_thread(
-        process_account_update_webhook,
-        payload,
-    )
+    account_updates = await process_account_update_webhook(payload)
     if account_updates:
         logger.info("account_update procesados=%s", account_updates)
 

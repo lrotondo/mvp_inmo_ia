@@ -1,5 +1,6 @@
 import {
   fetchConfig,
+  fetchSessionByWaba,
   postComplete,
   postSessionEvent,
   patchTenant,
@@ -51,17 +52,21 @@ window.addEventListener("message", (event) => {
       const d = data.data;
       embeddedAssets = {
         waba_id: String(d.waba_id || ""),
-        phone_number_id: String(d.phone_number_id || ""),
+        phone_number_id: d.phone_number_id
+          ? String(d.phone_number_id)
+          : undefined,
         business_portfolio_id: d.business_id
           ? String(d.business_id)
           : undefined,
         event: data.event ? String(data.event) : undefined,
       };
-      if (embeddedAssets.waba_id && embeddedAssets.phone_number_id) {
+      if (embeddedAssets.waba_id) {
         postSessionEvent(embeddedAssets).catch((err) =>
           console.warn("session-event:", err),
         );
-        connectHint.textContent = "Cuenta detectada. Completá el popup si aún está abierto…";
+        connectHint.textContent = embeddedAssets.phone_number_id
+          ? "Cuenta detectada. Completá el popup si aún está abierto…"
+          : "Cuenta detectada (sin teléfono en el popup). Completá el popup…";
       }
     }
   } catch {
@@ -101,17 +106,25 @@ function launchWhatsAppSignup(configId: string) {
           showError("No se recibió código de autorización. Intentá de nuevo.");
           return;
         }
-        if (!embeddedAssets?.waba_id || !embeddedAssets.phone_number_id) {
+        if (!embeddedAssets?.waba_id) {
           showError(
-            "Faltan IDs de WhatsApp (WABA / teléfono). Cerrá el popup y volvé a conectar.",
+            "Falta el ID de la cuenta WhatsApp (WABA). Cerrá el popup y volvé a conectar.",
           );
           return;
+        }
+        let phoneId = embeddedAssets.phone_number_id?.trim() || "";
+        if (!phoneId) {
+          const sess = await fetchSessionByWaba(embeddedAssets.waba_id).catch(() => null);
+          phoneId = sess?.phone_number_id?.trim() || "";
         }
         try {
           const name = (document.getElementById("tenant-name") as HTMLInputElement).value.trim();
           lastComplete = await postComplete({
             code: response.authResponse.code,
-            ...embeddedAssets,
+            waba_id: embeddedAssets.waba_id,
+            phone_number_id: phoneId || undefined,
+            business_portfolio_id: embeddedAssets.business_portfolio_id,
+            event: embeddedAssets.event,
             name: name || undefined,
           });
           stepCatalog.classList.remove("hidden");

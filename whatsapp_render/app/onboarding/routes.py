@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_engine
 from app.meta_graph import MetaGraphError, graph_version, meta_app_id
@@ -11,6 +11,7 @@ from app.onboarding.schemas import (
     CompleteOnboardingRequest,
     CompleteOnboardingResponse,
     OnboardingConfigResponse,
+    OnboardingSessionResponse,
     SessionEventRequest,
     TenantConfigPatch,
     TenantStatusResponse,
@@ -18,6 +19,7 @@ from app.onboarding.schemas import (
 from app.onboarding.service import (
     complete_onboarding,
     create_invite_session,
+    get_onboarding_session_by_waba,
     get_tenant_status,
     patch_tenant_config,
     record_session_event,
@@ -36,6 +38,22 @@ def onboarding_config() -> OnboardingConfigResponse:
         graph_version=graph_version(),
         configured=bool(app_id and config_id),
     )
+
+
+@router.get(
+    "/session",
+    response_model=OnboardingSessionResponse,
+    dependencies=[Depends(require_onboarding_bearer)],
+)
+def onboarding_get_session(
+    waba_id: str = Query(..., min_length=1),
+) -> OnboardingSessionResponse:
+    if get_engine() is None:
+        raise HTTPException(status_code=503, detail="DATABASE_URL no configurada")
+    row = get_onboarding_session_by_waba(waba_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    return row
 
 
 @router.post(

@@ -27,10 +27,31 @@ export async function fetchConfig(): Promise<OnboardingConfig> {
 
 export type EmbeddedAssets = {
   waba_id: string;
-  phone_number_id: string;
+  phone_number_id?: string;
   business_portfolio_id?: string;
   event?: string;
 };
+
+export type OnboardingSession = {
+  session_id: number;
+  waba_id: string | null;
+  phone_number_id: string | null;
+  status: string;
+  error_message?: string | null;
+};
+
+export async function fetchSessionByWaba(wabaId: string): Promise<OnboardingSession | null> {
+  const res = await fetch(
+    `${API_BASE}/api/onboarding/session?waba_id=${encodeURIComponent(wabaId)}`,
+    { headers: authHeaders() },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `session: ${res.status}`);
+  }
+  return res.json();
+}
 
 export async function postSessionEvent(assets: EmbeddedAssets): Promise<void> {
   const res = await fetch(`${API_BASE}/api/onboarding/session-event`, {
@@ -44,8 +65,12 @@ export async function postSessionEvent(assets: EmbeddedAssets): Promise<void> {
   }
 }
 
-export type CompletePayload = EmbeddedAssets & {
+export type CompletePayload = {
   code: string;
+  waba_id: string;
+  phone_number_id?: string;
+  business_portfolio_id?: string;
+  event?: string;
   name?: string;
   catalog_csv_path?: string;
   catalog_rent_csv_path?: string;

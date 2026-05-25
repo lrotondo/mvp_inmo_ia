@@ -12,16 +12,24 @@ class OnboardingConfigResponse(BaseModel):
 
 class SessionEventRequest(BaseModel):
     waba_id: str = Field(..., min_length=1)
-    phone_number_id: str = Field(..., min_length=1)
+    phone_number_id: str | None = None
     business_portfolio_id: str | None = None
     event: str | None = None
     invite_token: str | None = None
 
 
+class OnboardingSessionResponse(BaseModel):
+    session_id: int
+    waba_id: str | None = None
+    phone_number_id: str | None = None
+    status: str
+    error_message: str | None = None
+
+
 class CompleteOnboardingRequest(BaseModel):
     code: str = Field(..., min_length=1)
     waba_id: str = Field(..., min_length=1)
-    phone_number_id: str = Field(..., min_length=1)
+    phone_number_id: str | None = None
     business_portfolio_id: str | None = None
     event: str | None = None
     name: str | None = None

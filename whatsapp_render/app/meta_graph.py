@@ -30,6 +30,11 @@ def meta_app_secret() -> str:
     return _normalize_meta_app_secret(os.environ.get("META_APP_SECRET", ""))
 
 
+def system_user_access_token() -> str:
+    """System User con whatsapp_business_management (fetch phone_numbers en webhook)."""
+    return os.environ.get("META_SYSTEM_USER_ACCESS_TOKEN", "").strip()
+
+
 def _graph_base() -> str:
     return f"https://graph.facebook.com/{graph_version()}"
 
@@ -127,3 +132,80 @@ async def get_phone_number_display(phone_number_id: str, business_token: str) ->
         return None
     data = resp.json()
     return str(data.get("display_phone_number") or "").strip() or None
+
+
+_PHONE_LIST_FIELDS = (
+    "id,display_phone_number,verified_name,"
+    "code_verification_status,status,account_mode"
+)
+
+
+async def list_waba_phone_numbers(waba_id: str, access_token: str) -> list[dict[str, Any]]:
+    """GET /{waba_id}/phone_numbers — números del WABA del cliente."""
+    token = (access_token or "").strip()
+    if not token:
+        raise MetaGraphError("Token de acceso vacío para listar phone_numbers")
+    url = f"{_graph_base()}/{waba_id.strip()}/phone_numbers"
+    params = {"fields": _PHONE_LIST_FIELDS}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code >= 400:
+        raise MetaGraphError(
+            "No se pudo listar phone_numbers del WABA",
+            status_code=resp.status_code,
+            payload=resp.text,
+        )
+    data = resp.json()
+    raw = data.get("data")
+    if not isinstance(raw, list):
+        return []
+    return [row for row in raw if isinstance(row, dict)]
+
+
+def _phone_row_id(row: dict[str, Any]) -> str:
+    return str(row.get("id") or "").strip()
+
+
+def _is_sandbox_phone(row: dict[str, Any]) -> bool:
+    mode = str(row.get("account_mode") or "").strip().upper()
+    return mode == "SANDBOX"
+
+
+def pick_default_phone_number_id(rows: list[dict[str, Any]]) -> str | None:
+    """Elige un phone_number_id cuando Meta no lo envía en el webhook."""
+    candidates = [r for r in rows if _phone_row_id(r)]
+    if not candidates:
+        return None
+    non_sandbox = [r for r in candidates if not _is_sandbox_phone(r)]
+    pool = non_sandbox or candidates
+    verified = [
+        r
+        for r in pool
+        if str(r.get("code_verification_status") or "").strip().upper() == "VERIFIED"
+    ]
+    if len(verified) == 1:
+        return _phone_row_id(verified[0])
+    if len(verified) > 1:
+        logger.warning(
+            "pick_default_phone_number_id: varios números VERIFIED, usando el primero"
+        )
+        return _phone_row_id(verified[0])
+    if len(pool) == 1:
+        return _phone_row_id(pool[0])
+    logger.warning(
+        "pick_default_phone_number_id: varios números en WABA (%s), usando el primero",
+        len(pool),
+    )
+    return _phone_row_id(pool[0])
+
+
+async def resolve_phone_number_id_for_waba(
+    waba_id: str,
+    access_token: str,
+) -> str | None:
+    rows = await list_waba_phone_numbers(waba_id, access_token)
+    return pick_default_phone_number_id(rows)

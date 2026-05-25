@@ -100,15 +100,14 @@ def format_visit_handoff(property_ref: str) -> str:
 _INTAKE_BUNDLE_ALQUILER = (
     "Para ayudarte mejor, contame en un solo mensaje:\n"
     "• ¿Preferís *casa* o *departamento*?\n"
-    "• ¿Tenés *zona o barrio* preferido? (Si no, decime «sin preferencia de zona».)\n"
+    "• ¿Tenés *zona o barrio* preferido?\n"
     "• ¿Cuántos *dormitorios* necesitás?"
 )
 
 _INTAKE_BUNDLE_COMPRA = (
     "Para ayudarte mejor, contame en un solo mensaje:\n"
     "• ¿Buscás *casa*, *departamento* o *lote*?\n"
-    "• Si es casa o departamento: ¿*zona o barrio* preferido? (O «sin preferencia de zona».)\n"
-    "• ¿Cuántos *dormitorios* como mínimo? (En lote, solo si te importa.)\n"
+    "• Si es casa o departamento: ¿*zona o barrio* preferido?, ¿Cuántos *dormitorios* como mínimo?\n"
     "• ¿Tenés un *presupuesto máximo en USD*? (Si no, podés omitirlo.)"
 )
 
@@ -137,7 +136,7 @@ _WAITLIST_BUNDLE_COMPRA = (
     "Entiendo que ninguna de las opciones te cierra.\n\n"
     "Para agregarte a nuestra *lista de espera*, contame en *un solo mensaje*:\n"
     "• ¿Buscás *casa*, *departamento* o *lote*?\n"
-    "• ¿*Zona o barrio* preferido? (O «sin preferencia de zona».)\n"
+    "• ¿*Tenés zona o barrio* preferido?\n"
     "• ¿Cuántos *dormitorios* como mínimo?\n"
     "• ¿*Presupuesto máximo en USD*? (Si no, podés omitirlo.)\n"
     "• Preferencias (patio, cochera, metros, etc.)\n"
