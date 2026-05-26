@@ -62,6 +62,7 @@ class SessionState:
     flow_path: FlowPath = "nuevo"
     bot_paused: bool = False
     capture_data: dict[str, Any] = field(default_factory=dict)
+    updated_at: datetime | None = None
 
 
 def _memory_key(phone_number_id: str, wa_id: str) -> tuple[str, str]:
@@ -92,6 +93,7 @@ def _row_to_state(row: ChatSession) -> SessionState:
         flow_path=path,  # type: ignore[arg-type]
         bot_paused=bool(row.bot_paused),
         capture_data=_parse_capture_data(row.capture_data),
+        updated_at=row.updated_at,
     )
 
 
@@ -102,17 +104,26 @@ def get_or_create_session(phone_number_id: str, wa_id: str) -> SessionState:
         with _memory_lock:
             raw = _memory_sessions.get(_memory_key(pnid, wid))
             if raw is None:
-                state = SessionState()
+                now = datetime.now(timezone.utc)
+                state = SessionState(updated_at=now)
                 _memory_sessions[_memory_key(pnid, wid)] = {
                     "flow_path": state.flow_path,
                     "bot_paused": state.bot_paused,
                     "capture_data": state.capture_data,
+                    "updated_at": now,
                 }
                 return state
+            updated = raw.get("updated_at")
+            if isinstance(updated, str):
+                try:
+                    updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                except ValueError:
+                    updated = None
             return SessionState(
                 flow_path=raw.get("flow_path", "nuevo"),  # type: ignore[arg-type]
                 bot_paused=bool(raw.get("bot_paused")),
                 capture_data=dict(raw.get("capture_data") or {}),
+                updated_at=updated if isinstance(updated, datetime) else None,
             )
 
     with session_scope() as session:
@@ -153,16 +164,19 @@ def save_session(
     new_capture = capture_data if capture_data is not None else current.capture_data
 
     if get_engine() is None:
+        now = datetime.now(timezone.utc)
         with _memory_lock:
             _memory_sessions[_memory_key(pnid, wid)] = {
                 "flow_path": new_path,
                 "bot_paused": new_paused,
                 "capture_data": new_capture,
+                "updated_at": now,
             }
         return SessionState(
             flow_path=new_path,
             bot_paused=new_paused,
             capture_data=dict(new_capture),
+            updated_at=now,
         )
 
     now = datetime.now(timezone.utc)
@@ -192,6 +206,7 @@ def save_session(
         flow_path=new_path,
         bot_paused=new_paused,
         capture_data=dict(new_capture),
+        updated_at=now,
     )
 
 

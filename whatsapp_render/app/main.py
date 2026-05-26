@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -25,6 +26,12 @@ from app.listing_context import set_last_viewed_property
 from app.listing_delivery import BotDeliveryResult, deliver_bot_response
 from app.meta_client import MetaSendError
 from app.pipeline.inbound import process_inbound_message
+from app.session_lifecycle import (
+    apply_session_restart,
+    get_last_inbound_at,
+    should_auto_restart_session,
+    touch_last_inbound_at,
+)
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
 from app.tenant_service import (
     TenantContext,
@@ -545,17 +552,32 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             wa_id,
         )
 
-        previous_flow_path = session.flow_path
-        flow_path = resolve_flow_path(session, user_text)
-        flow_just_switched = (
-            previous_flow_path != flow_path
-            and flow_path in ("compra", "alquiler")
+        last_inbound_at = get_last_inbound_at(
+            session.capture_data,
+            session.updated_at,
         )
+        if should_auto_restart_session(
+            session.capture_data,
+            user_text,
+            last_inbound_at,
+        ):
+            session = apply_session_restart()
+            flow_path = "nuevo"
+            flow_just_switched = False
+        else:
+            previous_flow_path = session.flow_path
+            flow_path = resolve_flow_path(session, user_text)
+            flow_just_switched = (
+                previous_flow_path != flow_path
+                and flow_path in ("compra", "alquiler")
+            )
+
         await asyncio.to_thread(
             save_session,
             ctx.phone_number_id,
             wa_id,
             flow_path=flow_path,
+            capture_data=session.capture_data,
         )
 
         turn_result = await process_inbound_message(
@@ -620,6 +642,10 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         capture_after_turn = merge_outbound_capture_flags(
             turn_result.capture_data or dict(session.capture_data),
             outbound_for_client,
+        )
+        capture_after_turn = touch_last_inbound_at(
+            capture_after_turn,
+            datetime.now(timezone.utc),
         )
         if delivery is not None and delivery.delivered_property_id:
             capture_after_turn = set_last_viewed_property(

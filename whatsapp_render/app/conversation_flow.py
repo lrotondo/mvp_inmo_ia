@@ -57,6 +57,7 @@ from app.prompts.templates import (
     build_waitlist_consent_question,
     format_visit_confirmation,
 )
+from app.session_lifecycle import mark_advisor_handoff_completed
 from app.session_state import (
     capture_is_complete,
     capture_summary_text,
@@ -939,6 +940,7 @@ async def handle_turn(
             requirements=requirements,
         )
         text = WAITLIST_CONFIRMATION_TEXT
+        out_capture = mark_advisor_handoff_completed(out_capture)
         skip_property_delivery = True
 
     if plan.phase == Phase.VISIT_CONFIRM:
@@ -971,6 +973,7 @@ async def handle_turn(
         visit_lead_conversation_summary = summary.conversation_summary
         text = format_visit_confirmation(property_ref)
         out_capture = reset_visit_state(out_capture)
+        out_capture = mark_advisor_handoff_completed(out_capture)
         skip_property_delivery = True
 
     if flow_path == "captacion":
@@ -985,6 +988,7 @@ async def handle_turn(
         if capture_is_complete(cap):
             alerts.append("ALERTA_CAPTACION_PROPIETARIO")
             text = CLOSING_CAPTACION_TEXT
+            out_capture = mark_advisor_handoff_completed(out_capture)
 
     out_capture = append_user_flow_message(out_capture, flow_path, user_text)
 

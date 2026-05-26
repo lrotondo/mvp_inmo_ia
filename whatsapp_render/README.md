@@ -328,8 +328,19 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Estado de sesión (sin historial de chat)
 
 - No se persiste historial de mensajes en `chat_messages` ni en memoria.
-- El contexto vive en `chat_sessions.capture_data`: `search_profile`, `last_listing`, `user_flow_messages` (mensajes del cliente por rama), flags de bot (`bot_asked_visit_time`).
+- El contexto vive en `chat_sessions.capture_data`: `search_profile`, `last_listing`, `user_flow_messages` (mensajes del cliente por rama), flags de bot (`bot_asked_visit_time`), `last_inbound_at`, `advisor_handoff_completed_at`.
 - DeepSeek (chat mínimo) recibe: system corto + **solo el mensaje actual**.
+
+### Reinicio automático de conversación
+
+Si el cliente vuelve con un **saludo inicial** (ej. «hola», «buenos días») y se cumple alguna condición, el bot reinicia el flujo desde triage (`flow_path=nuevo`) y limpia `capture_data`:
+
+| Condición | Ejemplo |
+|-----------|---------|
+| Pasaron más de `SESSION_IDLE_RESTART_HOURS` (default **24**) desde el último mensaje del cliente | Tras un día sin escribir, escribe «hola» |
+| La última interacción cerró con handoff a asesor (visita confirmada, lista de espera registrada o captación completa) | Tras la confirmación de visita, escribe «hola» al rato |
+
+No aplica si el mensaje trae intención de flujo en el mismo texto (ej. «hola quiero alquilar» o «opción 2»): en ese caso sigue el flujo normal. Frases explícitas tipo «empecemos de nuevo» siguen usando `user_wants_fresh_start` (cambian `flow_path` sin la lógica de saludo+24h).
 
 ## Leads (`client_leads`)
 
