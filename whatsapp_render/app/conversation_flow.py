@@ -113,6 +113,7 @@ from app.waitlist_flow import (
 from app.visit_intent import (
     conversation_bare_me_interesa,
     conversation_requests_human,
+    conversation_requests_viewing,
     conversation_wants_visit,
     conversation_wants_visit_rent,
 )
@@ -302,6 +303,11 @@ def _wants_visit(
     ):
         return True
     if conversation_requests_human(t):
+        return True
+    if conversation_requests_viewing(t) and _has_listing_context(
+        capture_data,
+        catalog_path=catalog_path,
+    ):
         return True
     if flow_path == "alquiler":
         return conversation_wants_visit_rent(t)

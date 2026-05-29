@@ -2,6 +2,19 @@ from __future__ import annotations
 
 import re
 
+# Frases de interés + pedido de ver en persona (tras ficha o listado).
+_VIEW_IN_PERSON_RE = (
+    r"se\s+puede\s+ver(?!\s+(?:el\s+)?precio|\s+en\s+(?:la\s+)?web)|"
+    r"puedo\s+ver(?!\s+(?:el\s+)?precio|\s+en\s+(?:la\s+)?web)|"
+    r"podemos\s+ver|podr[ií]a\s+ver|puede\s+verla|puede\s+verlo|"
+    r"cu[aá]ndo\s+(?:la\s+)?veo|cu[aá]ndo\s+la\s+podemos\s+ver|"
+    r"quiero\s+conocerla|conocerla\s+en\s+persona"
+)
+_VIEWING_REQUEST_RE = re.compile(
+    rf"\b(?:{_VIEW_IN_PERSON_RE}|me\s+gusta.{{0,60}}(?:verla|verlo|visitar|{_VIEW_IN_PERSON_RE}))\b",
+    re.I | re.DOTALL,
+)
+
 _VISIT_RE = re.compile(
     r"\b("
     r"visitar|visita|verla|verlo|ver\s+la|ver\s+el|coordinar\s+visita|agendar|"
@@ -38,6 +51,11 @@ _BARE_ME_INTERESA_RE = re.compile(
 
 def conversation_bare_me_interesa(text: str) -> bool:
     return bool(_BARE_ME_INTERESA_RE.match((text or "").strip()))
+
+
+def conversation_requests_viewing(conversation_text: str) -> bool:
+    """Pedido explícito de ver la propiedad en persona (p. ej. tras la ficha)."""
+    return bool(_VIEWING_REQUEST_RE.search(conversation_text))
 
 
 def conversation_wants_visit(conversation_text: str) -> bool:
