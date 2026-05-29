@@ -8,6 +8,7 @@ _MAX_USER_MESSAGES_PER_FLOW = 40
 _LLM_PRIOR_USER_MESSAGES = 3
 
 _BOT_ASKED_VISIT_TIME_KEY = "bot_asked_visit_time"
+_BOT_OFFERED_VISIT_KEY = "bot_offered_visit"
 
 _BOT_ASKED_TIME_PREFERENCE_RE = re.compile(
     r"\b("
@@ -16,6 +17,40 @@ _BOT_ASKED_TIME_PREFERENCE_RE = re.compile(
     r")\b",
     re.I,
 )
+
+_BOT_OFFERED_VISIT_RE = re.compile(
+    r"\b("
+    r"agendar(?:\s+una)?\s+visita|"
+    r"coordinar(?:\s+una)?\s+visita|"
+    r"interesa\s+agendar(?:\s+una)?\s+visita|"
+    r"te\s+interesa.{0,50}visita|"
+    r"asesor\s+te\s+contacte.{0,80}visita|"
+    r"contacte.{0,50}coordinar.{0,50}visita"
+    r")\b",
+    re.I | re.DOTALL,
+)
+
+_VISIT_SCHEDULE_OUTBOUND_RE = re.compile(
+    r"Para que un asesor te contacte y coordinen la visita",
+    re.I,
+)
+
+
+def bot_offered_visit(capture_data: dict[str, Any] | None) -> bool:
+    return bool((capture_data or {}).get(_BOT_OFFERED_VISIT_KEY))
+
+
+def clear_bot_offered_visit(capture_data: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    merged.pop(_BOT_OFFERED_VISIT_KEY, None)
+    return merged
+
+
+def mark_bot_offered_visit(capture_data: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(capture_data or {})
+    merged[_BOT_OFFERED_VISIT_KEY] = True
+    return merged
+
 
 def prior_user_messages_for_flow(
     current_user_text: str,
@@ -112,6 +147,10 @@ def merge_outbound_capture_flags(
     body = (outbound_text or "").strip()
     if not body:
         return merged
+    if _VISIT_SCHEDULE_OUTBOUND_RE.search(body):
+        merged = clear_bot_offered_visit(merged)
+    elif _BOT_OFFERED_VISIT_RE.search(body):
+        merged = mark_bot_offered_visit(merged)
     if _BOT_ASKED_TIME_PREFERENCE_RE.search(body):
         merged[_BOT_ASKED_VISIT_TIME_KEY] = True
     return merged

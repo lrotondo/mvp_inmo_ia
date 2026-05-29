@@ -31,4 +31,8 @@ def test_wants_visit_bare_me_interesa_after_ficha_compra() -> None:
 
 def test_wants_visit_bare_me_interesa_after_ficha_alquiler() -> None:
     assert _wants_visit("alquiler", "me interesa", _CAPTURE_WITH_VIEWED)
+
+
+def test_wants_visit_si_without_bot_offer_is_false() -> None:
+    assert not _wants_visit("alquiler", "si", _CAPTURE_WITH_VIEWED)
     assert not _wants_visit("alquiler", "me interesa", {})

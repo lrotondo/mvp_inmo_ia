@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.capture_flow import clear_bot_offered_visit
+
 _VISIT_PENDING_KEY = "visit_pending"
 _VISIT_PROMPT_SENT_KEY = "visit_prompt_sent"
 _VISIT_ANSWERED_KEY = "visit_answered"
@@ -39,7 +41,7 @@ def is_visit_collecting(capture_data: dict[str, Any] | None) -> bool:
 
 
 def reset_visit_state(capture_data: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(capture_data)
+    merged = clear_bot_offered_visit(dict(capture_data))
     merged[_VISIT_PENDING_KEY] = False
     merged[_VISIT_PROMPT_SENT_KEY] = False
     merged[_VISIT_ANSWERED_KEY] = False
@@ -55,7 +57,7 @@ def mark_visit_pending(
     interest_text: str,
     property_ref: str = "",
 ) -> dict[str, Any]:
-    merged = dict(capture_data)
+    merged = clear_bot_offered_visit(dict(capture_data))
     merged[_VISIT_PENDING_KEY] = True
     merged[_VISIT_PROMPT_SENT_KEY] = False
     merged[_VISIT_ANSWERED_KEY] = False

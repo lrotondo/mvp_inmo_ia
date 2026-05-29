@@ -17,7 +17,12 @@ from typing import Any
 
 from app.catalog import get_catalog_for_flow, load_properties_for_catalog_path
 from app.catalog_profiles import format_row_compact
-from app.capture_flow import append_user_flow_message, prior_user_messages_for_flow, user_messages_for_flow
+from app.capture_flow import (
+    append_user_flow_message,
+    bot_offered_visit,
+    prior_user_messages_for_flow,
+    user_messages_for_flow,
+)
 from app.llm.intake_extraction import extract_search_criteria
 from app.llm.listing_picker import pick_listing_properties
 from app.conversation import build_model_messages
@@ -28,6 +33,7 @@ from app.listing_context import (
     clear_listing_focus_state,
     get_focused_listing_option_index,
     get_last_viewed_property_id,
+    listing_already_shown,
     get_shown_listing_ids,
     listing_already_shown,
     load_last_listing_rows,
@@ -254,14 +260,42 @@ def _listing_index(text: str) -> int | None:
     return None
 
 
+def _has_listing_context(
+    capture_data: dict[str, Any] | None,
+    *,
+    catalog_path: str | None = None,
+) -> bool:
+    if get_last_viewed_property_id(capture_data):
+        return True
+    if get_focused_listing_option_index(capture_data) is not None:
+        return True
+    raw = (capture_data or {}).get("last_listing")
+    if isinstance(raw, dict) and raw.get("ids"):
+        return True
+    if catalog_path:
+        return listing_already_shown(
+            catalog_csv_path=catalog_path,
+            capture_data=capture_data,
+        )
+    return False
+
+
 def _wants_visit(
     flow_path: str,
     text: str,
     capture_data: dict[str, Any] | None = None,
+    *,
+    catalog_path: str | None = None,
 ) -> bool:
     t = (text or "").strip()
     if not t:
         return False
+    if (
+        bot_offered_visit(capture_data)
+        and user_affirms_waitlist_consent(t)
+        and _has_listing_context(capture_data, catalog_path=catalog_path)
+    ):
+        return True
     if (
         get_last_viewed_property_id(capture_data)
         and conversation_bare_me_interesa(t)
@@ -629,6 +663,12 @@ def _resolve_visit_property_ref(
         capture_data,
         catalog_csv_path=catalog_path,
     )
+    if row is None and catalog_path:
+        focused = get_focused_listing_option_index(capture_data)
+        if focused is not None:
+            rows = load_last_listing_rows(catalog_path, capture_data)
+            if 1 <= focused <= len(rows):
+                row = rows[focused - 1]
     stored = get_visit_property_ref(capture_data)
     if stored:
         if stored.isdigit() and row is not None:
@@ -781,15 +821,27 @@ async def handle_turn(
         ):
             working_capture = mark_visit_answered(working_capture, user_text)
 
+        visit_catalog_path: str | None = None
+        if flow_path in ("compra", "alquiler"):
+            _n, _b, visit_catalog_path = get_catalog_for_flow(
+                flow_path,
+                catalog_sale_path,
+                catalog_rent_path,
+            )
         if (
-            _wants_visit(flow_path, user_text, working_capture)
+            _wants_visit(
+                flow_path,
+                user_text,
+                working_capture,
+                catalog_path=visit_catalog_path,
+            )
             and not get_visit_pending(working_capture)
             and get_intake_answered(working_capture)
             and not get_waitlist_pending(working_capture)
         ):
             visit_ref = _resolve_visit_property_ref(
                 working_capture,
-                catalog_path=None,
+                catalog_path=visit_catalog_path,
                 fallback_ref=extract_property_ref(
                     "",
                     flow_path=flow_path,
