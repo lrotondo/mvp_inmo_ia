@@ -28,6 +28,14 @@ class Tenant(Base):
     connected_at = mapped_column(DateTime(timezone=True), nullable=True)
     token_expires_at = mapped_column(DateTime(timezone=True), nullable=True)
     platform_tenant_id = mapped_column(Integer, nullable=True, index=True)
+    lead_alert_email = mapped_column(String(255), nullable=True)
+    lead_alert_whatsapp_to = mapped_column(String(32), nullable=True)
+    lead_notify_email_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    lead_notify_whatsapp_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
 
 
 class OnboardingSession(Base):

@@ -604,52 +604,62 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
         catalog_path_used = turn_result.catalog_path_used
 
         logger.info(
-            "Turno kind=%s answer_len=%s raw_alerts=%s alerts=%s ids=%s",
+            "Turno kind=%s answer_len=%s raw_alerts=%s alerts=%s ids=%s skip_outbound=%s",
             turn_result.plan_kind,
             len(clean_answer),
             raw_alerts,
             alerts,
             turn_result.candidate_ids,
+            turn_result.skip_outbound,
         )
+
+        if turn_result.flow_path_override:
+            flow_path = turn_result.flow_path_override
 
         delivery: BotDeliveryResult | None = None
-        try:
-            delivery = await deliver_bot_response(
-                access_token=ctx.access_token,
-                phone_number_id=ctx.phone_number_id,
-                to_wa_id=wa_id,
-                message=clean_answer,
-                catalog_csv_path=catalog_path_used,
-                current_user_text=user_text,
-                flow_path=flow_path,
-                catalog_sale_path=ctx.catalog_csv_path,
-                catalog_rent_path=ctx.catalog_rent_csv_path,
-                property_ref=property_ref,
-                capture_data=turn_result.capture_data or session.capture_data,
-                skip_property_delivery=turn_result.skip_property_delivery,
-            )
-            outbound_for_client = delivery.text
-        except MetaSendError as exc:
-            logger.error(
-                "WhatsApp no entregado wa_id=%s transient=%s code=%s status=%s: %s",
-                wa_id,
-                exc.is_transient,
-                exc.error_code,
-                exc.status_code,
-                exc,
-            )
-            outbound_for_client = clean_answer
-        except Exception:
-            logger.exception(
-                "Error enviando respuesta WhatsApp wa_id=%s; webhook OK para evitar reenvío Meta",
-                wa_id,
-            )
-            outbound_for_client = clean_answer
+        outbound_for_client = ""
+        if turn_result.skip_outbound:
+            logger.info("post_handoff skip_outbound wa_id=%s", wa_id)
+        else:
+            try:
+                delivery = await deliver_bot_response(
+                    access_token=ctx.access_token,
+                    phone_number_id=ctx.phone_number_id,
+                    to_wa_id=wa_id,
+                    message=clean_answer,
+                    catalog_csv_path=catalog_path_used,
+                    current_user_text=user_text,
+                    flow_path=flow_path,
+                    catalog_sale_path=ctx.catalog_csv_path,
+                    catalog_rent_path=ctx.catalog_rent_csv_path,
+                    property_ref=property_ref,
+                    capture_data=turn_result.capture_data or session.capture_data,
+                    skip_property_delivery=turn_result.skip_property_delivery,
+                )
+                outbound_for_client = delivery.text
+            except MetaSendError as exc:
+                logger.error(
+                    "WhatsApp no entregado wa_id=%s transient=%s code=%s status=%s: %s",
+                    wa_id,
+                    exc.is_transient,
+                    exc.error_code,
+                    exc.status_code,
+                    exc,
+                )
+                outbound_for_client = clean_answer
+            except Exception:
+                logger.exception(
+                    "Error enviando respuesta WhatsApp wa_id=%s; webhook OK para evitar reenvío Meta",
+                    wa_id,
+                )
+                outbound_for_client = clean_answer
 
-        capture_after_turn = merge_outbound_capture_flags(
-            turn_result.capture_data or dict(session.capture_data),
-            outbound_for_client,
-        )
+        capture_after_turn = dict(turn_result.capture_data or session.capture_data)
+        if outbound_for_client:
+            capture_after_turn = merge_outbound_capture_flags(
+                capture_after_turn,
+                outbound_for_client,
+            )
         capture_after_turn = touch_last_inbound_at(
             capture_after_turn,
             datetime.now(timezone.utc),

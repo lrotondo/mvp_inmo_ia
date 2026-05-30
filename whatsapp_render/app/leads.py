@@ -10,29 +10,18 @@ from typing import Literal
 from sqlalchemy import select
 
 from app.db import get_engine, session_scope
+from app.email_client import send_email, smtp_configured
 from app.meta_client import send_whatsapp_text_message
 from app.models import ClientLead
+from app.tenant_service import fetch_lead_notification_settings
 
 logger = logging.getLogger(__name__)
 
 LeadType = Literal["venta", "alquiler", "captacion"]
 
 
-def _app_env() -> str:
-    return (os.environ.get("APP_ENV") or "development").strip().lower()
-
-
 def _lead_detection_enabled() -> bool:
     raw = os.environ.get("LEAD_DETECTION_ENABLED", "true").strip().lower()
-    return raw not in ("0", "false", "no", "off")
-
-
-def _lead_whatsapp_notify_to() -> str:
-    return (os.environ.get("LEAD_WHATSAPP_NOTIFY_TO") or "").strip()
-
-
-def _lead_whatsapp_notify_enabled() -> bool:
-    raw = os.environ.get("LEAD_WHATSAPP_NOTIFY_ENABLED", "true").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 
@@ -50,6 +39,13 @@ def is_transcript_summary(text: str) -> bool:
     hits = len(_TRANSCRIPT_SUMMARY_RE.findall(body))
     lines = [ln for ln in body.splitlines() if ln.strip()]
     return hits >= 2 or (hits >= 1 and len(lines) <= 3)
+
+
+def format_lead_notification_subject(lead_type: LeadType) -> str:
+    label = {"venta": "Compra", "alquiler": "Alquiler", "captacion": "Captación"}.get(
+        lead_type, lead_type
+    )
+    return f"Lead {label} - nuevo interés"
 
 
 def format_lead_notification_message(
@@ -172,7 +168,39 @@ async def _notify_agent_whatsapp(
         to_wa_id=notify_to,
         message=body,
     )
-    logger.info("Notificacion lead enviada a %s (cliente wa_id=%s)", notify_to, wa_id)
+    logger.info("Notificacion lead WhatsApp enviada a %s (cliente wa_id=%s)", notify_to, wa_id)
+
+
+async def _notify_agent_email(
+    *,
+    lead_type: LeadType,
+    notify_to: str,
+    contact_name: str | None,
+    wa_id: str,
+    property_ref: str,
+    interest_summary: str,
+    conversation_summary: str,
+    capture_summary: str | None = None,
+) -> None:
+    if not smtp_configured():
+        logger.warning(
+            "SMTP no configurado; omitiendo email de lead a %s wa_id=%s",
+            notify_to,
+            wa_id,
+        )
+        return
+    body = format_lead_notification_message(
+        lead_type=lead_type,
+        contact_name=contact_name,
+        wa_id=wa_id,
+        property_ref=property_ref or None,
+        interest_summary=interest_summary,
+        conversation_summary=conversation_summary,
+        capture_summary=capture_summary,
+    )
+    subject = format_lead_notification_subject(lead_type)
+    await send_email(to=notify_to, subject=subject, body_text=body)
+    logger.info("Notificacion lead email enviada a %s (cliente wa_id=%s)", notify_to, wa_id)
 
 
 async def try_register_flow_alert(
@@ -211,37 +239,60 @@ async def try_register_flow_alert(
     if not is_new and not notify_on_update:
         return
 
-    if not _lead_whatsapp_notify_enabled():
-        return
-
-    notify_to = _lead_whatsapp_notify_to()
-    if not notify_to:
-        return
-
-    token = access_token.strip()
-    if not token:
+    settings = await asyncio.to_thread(
+        fetch_lead_notification_settings,
+        phone_number_id,
+    )
+    if settings is None:
+        logger.warning(
+            "Sin configuracion de alertas para tenant phone_number_id=%r wa_id=%s",
+            phone_number_id,
+            wa_id,
+        )
         return
 
     summary = interest_summary
     if not is_new and notify_on_update:
         summary = f"[Actualización de interés] {interest_summary}"
 
-    try:
-        await _notify_agent_whatsapp(
-            lead_type=lead_type,
-            access_token=token,
-            phone_number_id=phone_number_id,
-            notify_to=notify_to,
-            contact_name=contact_name,
-            wa_id=wa_id,
-            property_ref=property_ref,
-            interest_summary=summary,
-            conversation_summary=conversation_summary,
-            capture_summary=capture_summary,
-        )
-    except Exception:
-        logger.exception(
-            "Error enviando notificacion flow %s a %s",
-            lead_type,
-            notify_to,
-        )
+    token = access_token.strip()
+
+    if settings.whatsapp_enabled and settings.whatsapp_to and token:
+        try:
+            await _notify_agent_whatsapp(
+                lead_type=lead_type,
+                access_token=token,
+                phone_number_id=phone_number_id,
+                notify_to=settings.whatsapp_to,
+                contact_name=contact_name,
+                wa_id=wa_id,
+                property_ref=property_ref,
+                interest_summary=summary,
+                conversation_summary=conversation_summary,
+                capture_summary=capture_summary,
+            )
+        except Exception:
+            logger.exception(
+                "Error enviando notificacion WhatsApp lead %s a %s",
+                lead_type,
+                settings.whatsapp_to,
+            )
+
+    if settings.email_enabled and settings.email:
+        try:
+            await _notify_agent_email(
+                lead_type=lead_type,
+                notify_to=settings.email,
+                contact_name=contact_name,
+                wa_id=wa_id,
+                property_ref=property_ref,
+                interest_summary=summary,
+                conversation_summary=conversation_summary,
+                capture_summary=capture_summary,
+            )
+        except Exception:
+            logger.exception(
+                "Error enviando notificacion email lead %s a %s",
+                lead_type,
+                settings.email,
+            )

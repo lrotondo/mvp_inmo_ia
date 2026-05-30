@@ -65,7 +65,8 @@ from app.prompts.templates import (
     build_waitlist_consent_question,
     format_visit_confirmation,
 )
-from app.session_lifecycle import mark_advisor_handoff_completed
+from app.session_lifecycle import had_advisor_handoff, mark_advisor_handoff_completed
+from app.post_handoff import handle_post_handoff_turn
 from app.session_state import (
     capture_is_complete,
     capture_summary_text,
@@ -235,6 +236,8 @@ class FlowResult:
     visit_lead_interest_summary: str = ""
     visit_lead_conversation_summary: str = ""
     skip_property_delivery: bool = False
+    skip_outbound: bool = False
+    flow_path_override: str | None = None
 
 
 def _listing_index(text: str) -> int | None:
@@ -793,6 +796,39 @@ async def handle_turn(
                     flow_path,
                 )
 
+    if had_advisor_handoff(working_capture):
+        (
+            ph_text,
+            ph_capture,
+            ph_phase,
+            ph_skip_outbound,
+            ph_skip_property_delivery,
+            ph_flow_override,
+        ) = await handle_post_handoff_turn(
+            tenant_name=tenant_name,
+            flow_path=flow_path,
+            catalog_sale_path=catalog_sale_path,
+            catalog_rent_path=catalog_rent_path,
+            capture_data=working_capture,
+            user_text=user_text,
+            wa_id=wa_id,
+        )
+        append_flow = ph_flow_override or flow_path
+        ph_capture = append_user_flow_message(ph_capture, append_flow, user_text)
+        return FlowResult(
+            text=ph_text.strip(),
+            phase=ph_phase,
+            plan=FlowPlan(profile=None, catalog_path=None),
+            capture_data=ph_capture,
+            alerts=[],
+            property_ref="",
+            catalog_path=None,
+            candidate_ids=[],
+            skip_property_delivery=ph_skip_property_delivery,
+            skip_outbound=ph_skip_outbound,
+            flow_path_override=ph_flow_override,
+        )
+
     if flow_path in ("compra", "alquiler"):
         if (
             get_waitlist_pending(working_capture)
@@ -999,7 +1035,18 @@ async def handle_turn(
             requirements=requirements,
         )
         text = WAITLIST_CONFIRMATION_TEXT
-        out_capture = mark_advisor_handoff_completed(out_capture)
+        waitlist_ref = get_intake_raw_text(out_capture)[:120]
+        if not waitlist_ref.strip():
+            waitlist_ref = _listing_summary_for_waitlist(
+                plan.catalog_path,
+                out_capture,
+                flow_path,
+            )[:120]
+        out_capture = mark_advisor_handoff_completed(
+            out_capture,
+            handoff_kind="waitlist",
+            context_ref=waitlist_ref,
+        )
         skip_property_delivery = True
 
     if plan.phase == Phase.VISIT_CONFIRM:
@@ -1032,7 +1079,11 @@ async def handle_turn(
         visit_lead_conversation_summary = summary.conversation_summary
         text = format_visit_confirmation(property_ref)
         out_capture = reset_visit_state(out_capture)
-        out_capture = mark_advisor_handoff_completed(out_capture)
+        out_capture = mark_advisor_handoff_completed(
+            out_capture,
+            handoff_kind="visit",
+            context_ref=property_ref,
+        )
         skip_property_delivery = True
 
     if flow_path == "captacion":
@@ -1047,7 +1098,11 @@ async def handle_turn(
         if capture_is_complete(cap):
             alerts.append("ALERTA_CAPTACION_PROPIETARIO")
             text = CLOSING_CAPTACION_TEXT
-            out_capture = mark_advisor_handoff_completed(out_capture)
+            out_capture = mark_advisor_handoff_completed(
+                out_capture,
+                handoff_kind="captacion",
+                context_ref=capture_summary_text(out_capture),
+            )
 
     out_capture = append_user_flow_message(out_capture, flow_path, user_text)
 

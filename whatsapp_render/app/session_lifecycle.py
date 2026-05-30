@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 _LAST_INBOUND_AT_KEY = "last_inbound_at"
 _ADVISOR_HANDOFF_COMPLETED_AT_KEY = "advisor_handoff_completed_at"
+_HANDOFF_KIND_KEY = "handoff_kind"
+_HANDOFF_CONTEXT_REF_KEY = "handoff_context_ref"
+
+HandoffKind = str  # "visit" | "waitlist" | "captacion"
 
 _INITIAL_GREETING_RE = re.compile(
     r"^\s*("
@@ -139,6 +143,14 @@ def had_advisor_handoff(capture_data: dict[str, Any] | None) -> bool:
     return bool((capture_data or {}).get(_ADVISOR_HANDOFF_COMPLETED_AT_KEY))
 
 
+def get_handoff_kind(capture_data: dict[str, Any] | None) -> str:
+    return str((capture_data or {}).get(_HANDOFF_KIND_KEY) or "").strip()
+
+
+def get_handoff_context_ref(capture_data: dict[str, Any] | None) -> str:
+    return str((capture_data or {}).get(_HANDOFF_CONTEXT_REF_KEY) or "").strip()
+
+
 def is_next_calendar_day_since_last_inbound(
     last_inbound_at: datetime | None,
     *,
@@ -199,6 +211,8 @@ def apply_session_restart() -> SessionState:
 def mark_advisor_handoff_completed(
     capture_data: dict[str, Any],
     *,
+    handoff_kind: str = "",
+    context_ref: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     merged = dict(capture_data or {})
@@ -206,6 +220,12 @@ def mark_advisor_handoff_completed(
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     merged[_ADVISOR_HANDOFF_COMPLETED_AT_KEY] = current.isoformat()
+    kind = (handoff_kind or "").strip()
+    if kind:
+        merged[_HANDOFF_KIND_KEY] = kind
+    ref = (context_ref or "").strip()
+    if ref:
+        merged[_HANDOFF_CONTEXT_REF_KEY] = ref
     return merged
 
 

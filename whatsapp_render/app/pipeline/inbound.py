@@ -26,6 +26,8 @@ class InboundTurnResult:
     visit_lead_interest_summary: str = ""
     visit_lead_conversation_summary: str = ""
     skip_property_delivery: bool = False
+    skip_outbound: bool = False
+    flow_path_override: str | None = None
 
 
 async def process_inbound_message(
@@ -75,4 +77,6 @@ async def process_inbound_message(
         visit_lead_interest_summary=result.visit_lead_interest_summary,
         visit_lead_conversation_summary=result.visit_lead_conversation_summary,
         skip_property_delivery=result.skip_property_delivery,
+        skip_outbound=result.skip_outbound,
+        flow_path_override=result.flow_path_override,
     )

@@ -24,8 +24,12 @@ Servicio para responder WhatsApp con un solo backend:
 | `LLM_CHAT_PROVIDER` | no | Default: `deepseek` |
 | `APP_ENV` | no | `development` / `dev` / `local` desactiva leads |
 | `LEAD_DETECTION_ENABLED` | no | Default `true`; `false` apaga leads en producción |
-| `LEAD_WHATSAPP_NOTIFY_TO` | no | Número del asesor (solo dígitos, ej. `5492494123456`) para avisar leads por WhatsApp |
-| `LEAD_WHATSAPP_NOTIFY_ENABLED` | no | Default `true`; `false` desactiva solo el aviso al asesor |
+| `LEAD_WHATSAPP_NOTIFY_TO` | no | Fallback global del número asesor si el tenant no tiene `lead_alert_whatsapp_to` |
+| `SMTP_HOST` | no | Servidor SMTP para alertas por email (requerido para envío mail) |
+| `SMTP_PORT` | no | Default `587` |
+| `SMTP_USER` / `SMTP_PASSWORD` | no | Credenciales SMTP (opcional según el relay) |
+| `SMTP_FROM` | no | Remitente de alertas (ej. `alertas@tudominio.com`) |
+| `SMTP_USE_TLS` | no | Default `true` |
 | `WAITLIST_EXPORT_SECRET` | no | Secreto para `GET /admin/waitlist/export.csv` (header `X-Admin-Secret`) |
 | `WAITLIST_EXPORT_DEFAULT_DAYS` | no | Default `7` — ventana del CSV de lista de espera |
 | `META_VERIFY_TOKEN` | si | Token que configuras en Meta para verificar webhook |
@@ -115,6 +119,10 @@ Columnas principales:
 - `waba_id`, `business_portfolio_id` — Embedded Signup
 - `onboarding_status` — `manual` | `connected` | `failed` | `pending_token`
 - `connected_at`, `onboarding_error`, `token_expires_at` — opcionales
+- `lead_alert_email` — casilla que recibe alertas de interés (carga manual)
+- `lead_alert_whatsapp_to` — número del asesor para alertas WhatsApp (solo dígitos)
+- `lead_notify_email_enabled` — default `0`; activa envío por email
+- `lead_notify_whatsapp_enabled` — default `1`; activa envío por WhatsApp
 
 Tabla `onboarding_sessions`: respaldo de assets del popup antes del intercambio de token.
 
@@ -330,7 +338,7 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 ## Estado de sesión (sin historial de chat)
 
 - No se persiste historial de mensajes en `chat_messages` ni en memoria.
-- El contexto vive en `chat_sessions.capture_data`: `search_profile`, `last_listing`, `user_flow_messages` (mensajes del cliente por rama), flags de bot (`bot_asked_visit_time`), `last_inbound_at`, `advisor_handoff_completed_at`.
+- El contexto vive en `chat_sessions.capture_data`: `search_profile`, `last_listing`, `user_flow_messages` (mensajes del cliente por rama), flags de bot (`bot_asked_visit_time`), `last_inbound_at`, `advisor_handoff_completed_at`, `handoff_kind`, `handoff_context_ref`.
 - DeepSeek (chat mínimo) recibe: system corto + **solo el mensaje actual**.
 
 ### Reinicio automático de conversación
@@ -352,6 +360,18 @@ No aplica al reinicio por saludo+24h/handoff si el mensaje trae intención de fl
 | `SESSION_RESET_TIMEZONE` | Zona IANA para el corte de día del reinicio automático (default `America/Argentina/Buenos_Aires`) |
 | `SESSION_IDLE_RESTART_HOURS` | Horas de inactividad para reinicio con saludo (default `24`) |
 
+### Mensajes después del handoff a asesor
+
+Tras confirmar **visita**, **lista de espera** o **captación completa**, el bot guarda `advisor_handoff_completed_at`, `handoff_kind` y `handoff_context_ref`. Cada mensaje siguiente se clasifica con LLM en:
+
+| Categoría | Comportamiento |
+|-----------|----------------|
+| **Agradecimiento / despedida** (`thanks`) | No se envía respuesta por WhatsApp |
+| **Pregunta sobre lo registrado** (`property_question`) | Respuesta breve con datos del catálogo/contexto (visita: propiedad de interés; waitlist: opciones vistas; captación: datos captados). Sin re-ofrecer visitas ni listados |
+| **Nueva búsqueda** (`new_search`) | Reinicio de sesión (`capture_data` vacío) y mensaje de triage o intake según el texto |
+
+Implementación: [`app/llm/post_handoff_classifier.py`](app/llm/post_handoff_classifier.py), [`app/post_handoff.py`](app/post_handoff.py).
+
 ## Leads (`client_leads`)
 
 Requiere `DATABASE_URL`. El registro ocurre cuando el backend dispara una alerta (visita compra/alquiler o captación completa) en el mismo turno.
@@ -362,21 +382,35 @@ Requiere `DATABASE_URL`. El registro ocurre cuando el backend dispara una alerta
 - `conversation_summary`: resumen en prosa (2–4 oraciones) generado por LLM en visita y waitlist; no es transcripción línea a línea del chat
 - Mismo cliente + propiedad en 24 h → **actualiza** la fila (sin reenviar aviso).
 
-### Aviso por WhatsApp al equipo
+### Avisos al equipo (WhatsApp y email por tenant)
 
-Si `LEAD_WHATSAPP_NOTIFY_TO` está definido (número en formato internacional **solo dígitos**, ej. `5492494123456`), al **crear** un lead con interés real el bot envía un mensaje de texto al asesor con:
+Al **crear** un lead con interés real, el bot puede notificar al dueño/asesor por **WhatsApp**, **email**, o ambos, según la configuración de cada fila en `tenants`:
 
-- Nombre del contacto (perfil WhatsApp)
-- `wa_id` del cliente
-- Propiedad de referencia (si se detectó en el mensaje o listado)
-- Resumen del interés y de la conversación
+| Columna | Descripción |
+|---------|-------------|
+| `lead_alert_email` | Casilla destino del aviso |
+| `lead_alert_whatsapp_to` | Número asesor (solo dígitos, ej. `5492494123456`) |
+| `lead_notify_email_enabled` | `1` = envía email (requiere SMTP configurado en el servicio) |
+| `lead_notify_whatsapp_enabled` | `1` = envía WhatsApp |
 
-Usa el mismo `access_token` y `phone_number_id` del tenant (número de la inmobiliaria en Meta). El destinatario debe haber iniciado chat con ese número de WhatsApp Business al menos una vez (ventana de 24 h) o estar en la lista de permitidos de la app.
+El mensaje incluye: nombre del contacto, `wa_id`, propiedad de referencia, resumen del interés y de la conversación.
 
-| Variable | Descripción |
-|----------|-------------|
-| `LEAD_WHATSAPP_NOTIFY_TO` | Número del asesor/equipo |
-| `LEAD_WHATSAPP_NOTIFY_ENABLED` | Default `true`; `false` desactiva solo el aviso |
+WhatsApp usa el `access_token` y `phone_number_id` del tenant (número de la inmobiliaria en Meta). Si `lead_alert_whatsapp_to` está vacío, se usa `LEAD_WHATSAPP_NOTIFY_TO` como fallback global.
+
+**Ejemplo de configuración manual:**
+
+```sql
+UPDATE tenants SET
+  lead_alert_email = 'dueño@inmobiliaria.com',
+  lead_alert_whatsapp_to = '5492494123456',
+  lead_notify_email_enabled = 1,
+  lead_notify_whatsapp_enabled = 1
+WHERE phone_number_id = 'TU_PHONE_NUMBER_ID';
+```
+
+Migración: [`migrations/mysql/003_tenant_lead_alerts.sql`](migrations/mysql/003_tenant_lead_alerts.sql)
+
+**Variables SMTP (global del servicio):** `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS` (default true). Si SMTP no está configurado, el email se omite con warning en logs (no falla el webhook).
 
 ```sql
 SELECT contact_name, wa_id, property_ref, interest_summary, conversation_at

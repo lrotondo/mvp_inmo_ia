@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -18,6 +19,14 @@ class TenantContext:
     system_prompt: str | None
     catalog_csv_path: str | None
     catalog_rent_csv_path: str | None
+
+
+@dataclass(frozen=True)
+class LeadNotificationSettings:
+    email: str | None
+    whatsapp_to: str | None
+    email_enabled: bool
+    whatsapp_enabled: bool
 
 
 def get_tenant_by_phone_number_id(session: Session, phone_number_id: str) -> Tenant | None:
@@ -47,4 +56,35 @@ def fetch_tenant_context(phone_number_id: str) -> TenantContext | None:
             system_prompt=row.system_prompt,
             catalog_csv_path=row.catalog_csv_path,
             catalog_rent_csv_path=rent_path,
+        )
+
+
+def _resolve_whatsapp_notify_to(row: Tenant) -> str | None:
+    tenant_num = (row.lead_alert_whatsapp_to or "").strip()
+    if tenant_num:
+        return tenant_num
+    env_num = (os.environ.get("LEAD_WHATSAPP_NOTIFY_TO") or "").strip()
+    return env_num or None
+
+
+def fetch_lead_notification_settings(
+    phone_number_id: str,
+) -> LeadNotificationSettings | None:
+    if not phone_number_id or not phone_number_id.strip():
+        return None
+    if get_engine() is None:
+        return None
+    with session_scope() as session:
+        row = get_tenant_by_phone_number_id(session, phone_number_id)
+        if row is None:
+            return None
+        email = (row.lead_alert_email or "").strip() or None
+        whatsapp_to = _resolve_whatsapp_notify_to(row)
+        email_enabled = bool(row.lead_notify_email_enabled)
+        whatsapp_enabled = bool(row.lead_notify_whatsapp_enabled)
+        return LeadNotificationSettings(
+            email=email,
+            whatsapp_to=whatsapp_to,
+            email_enabled=email_enabled,
+            whatsapp_enabled=whatsapp_enabled,
         )
