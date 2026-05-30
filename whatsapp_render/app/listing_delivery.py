@@ -18,6 +18,7 @@ from app.meta_client import (
     send_whatsapp_image_message,
     send_whatsapp_text_message,
 )
+from app.prompts.templates import build_listing_default_closing
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def ensure_listado_from_candidates(
     intro = "\n".join(intro_lines[:4]).strip()
     closing = "\n".join(closing_lines[-2:]).strip()
     if not closing or closing.lower() == intro.lower():
-        closing = "¿Alguna de estas opciones te llama la atención para pasarte más detalles?"
+        closing = build_listing_default_closing(option_count=len(ids))
 
     parts = [intro, tag_line, closing]
     result = "\n\n".join(p for p in parts if p.strip())

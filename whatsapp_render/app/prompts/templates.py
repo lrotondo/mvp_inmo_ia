@@ -186,6 +186,26 @@ def build_triage_message(tenant_name: str) -> str:
     )
 
 
+def build_listing_intro(*, option_count: int) -> str:
+    if option_count == 1:
+        return "¡Buenísimo! Te comparto una opción que encaja con lo que buscás:"
+    return "¡Buenísimo! Te comparto algunas opciones que encajan con lo que buscás:"
+
+
+def build_listing_closing(*, option_count: int) -> str:
+    if option_count == 1:
+        return "¿Te llama la atención para pasarte más detalles?"
+    return "¿Cuál te llama más la atención para pasarte más detalles?"
+
+
+def build_listing_default_closing(*, option_count: int) -> str:
+    if option_count == 1:
+        return build_listing_closing(option_count=1)
+    return (
+        "¿Alguna de estas opciones te llama la atención para pasarte más detalles?"
+    )
+
+
 def _minimal_prompt_template() -> str:
     return os.environ.get("MINIMAL_SYSTEM_PROMPT", "").strip() or _DEFAULT_MINIMAL_SYSTEM_PROMPT
 

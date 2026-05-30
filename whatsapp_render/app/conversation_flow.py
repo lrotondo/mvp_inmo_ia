@@ -57,6 +57,8 @@ from app.prompts.templates import (
     WAITLIST_CONFIRMATION_TEXT,
     build_chat_system_prompt,
     build_intake_bundle_question,
+    build_listing_closing,
+    build_listing_intro,
     build_triage_message,
     build_visit_schedule_question,
     build_waitlist_bundle_question,
@@ -120,10 +122,6 @@ from app.visit_intent import (
 
 logger = logging.getLogger(__name__)
 
-_LISTING_INTRO = (
-    "¡Buenísimo! Te comparto algunas opciones que encajan con lo que buscás:"
-)
-_LISTING_CLOSING = "¿Cuál te llama más la atención para pasarte más detalles?"
 _LISTING_EMPTY = (
     "Por ahora no tengo opciones que coincidan con tu búsqueda. "
     "¿Querés ampliar zona, tipo o presupuesto?"
@@ -425,8 +423,11 @@ def plan_message(ctx: FlowContext, user_text: str) -> FlowPlan:
 def _build_listing_text(plan: FlowPlan) -> str:
     if not plan.candidate_ids:
         return _LISTING_EMPTY
+    count = len(plan.candidate_ids)
     tag = f"[LISTADO:{','.join(plan.candidate_ids)}]"
-    return f"{_LISTING_INTRO}\n\n{tag}\n\n{_LISTING_CLOSING}"
+    intro = build_listing_intro(option_count=count)
+    closing = build_listing_closing(option_count=count)
+    return f"{intro}\n\n{tag}\n\n{closing}"
 
 
 def build_detail_outbound(
