@@ -30,6 +30,7 @@ from app.session_lifecycle import (
     apply_session_restart,
     get_last_inbound_at,
     should_auto_restart_session,
+    should_reset_session_next_day,
     touch_last_inbound_at,
 )
 from app.session_state import get_or_create_session, resolve_flow_path, save_session
@@ -556,10 +557,16 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
             session.capture_data,
             session.updated_at,
         )
-        if should_auto_restart_session(
+        now = datetime.now(timezone.utc)
+        if should_reset_session_next_day(last_inbound_at, now=now):
+            session = apply_session_restart()
+            flow_path = "nuevo"
+            flow_just_switched = False
+        elif should_auto_restart_session(
             session.capture_data,
             user_text,
             last_inbound_at,
+            now=now,
         ):
             session = apply_session_restart()
             flow_path = "nuevo"

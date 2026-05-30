@@ -5,6 +5,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.session_state import SessionState
 
@@ -40,6 +41,23 @@ _LISTING_PICK_RE = re.compile(
     r"\b(?:la|el)\s+opci[oó]n\s*\d+|opci[oó]n\s*\d+\b",
     re.I,
 )
+
+
+_DEFAULT_SESSION_RESET_TIMEZONE = "America/Argentina/Buenos_Aires"
+
+
+def _session_reset_timezone() -> ZoneInfo:
+    raw = os.environ.get("SESSION_RESET_TIMEZONE", "").strip()
+    name = raw or _DEFAULT_SESSION_RESET_TIMEZONE
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        logger.warning(
+            "SESSION_RESET_TIMEZONE=%r invalid; using %s",
+            raw,
+            _DEFAULT_SESSION_RESET_TIMEZONE,
+        )
+        return ZoneInfo(_DEFAULT_SESSION_RESET_TIMEZONE)
 
 
 def _idle_restart_hours() -> float:
@@ -119,6 +137,37 @@ def is_session_idle_over_threshold(
 
 def had_advisor_handoff(capture_data: dict[str, Any] | None) -> bool:
     return bool((capture_data or {}).get(_ADVISOR_HANDOFF_COMPLETED_AT_KEY))
+
+
+def is_next_calendar_day_since_last_inbound(
+    last_inbound_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if last_inbound_at is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    tz = _session_reset_timezone()
+    last_local = last_inbound_at.astimezone(tz).date()
+    now_local = current.astimezone(tz).date()
+    return now_local > last_local
+
+
+def should_reset_session_next_day(
+    last_inbound_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not is_next_calendar_day_since_last_inbound(last_inbound_at, now=now):
+        return False
+    logger.info(
+        "reset_session_next_day last_inbound_at=%s now=%s",
+        last_inbound_at.isoformat() if last_inbound_at else None,
+        (now or datetime.now(timezone.utc)).isoformat(),
+    )
+    return True
 
 
 def should_auto_restart_session(

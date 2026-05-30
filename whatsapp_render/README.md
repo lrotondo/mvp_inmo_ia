@@ -39,6 +39,8 @@ Servicio para responder WhatsApp con un solo backend:
 | `CATALOG_CACHE_TTL_SECONDS` | no | Cache en memoria de planillas Google (default `300`) |
 | `LISTING_IMAGE_DELIVERY` | no | Default `true`; `false` = listados en un solo mensaje de texto |
 | `MINIMAL_SYSTEM_PROMPT` | no | Reemplaza el system prompt corto de chat (captación / preguntas post-listado) |
+| `SESSION_RESET_TIMEZONE` | no | Zona IANA para reinicio diario de conversación (default `America/Argentina/Buenos_Aires`) |
+| `SESSION_IDLE_RESTART_HOURS` | no | Horas de inactividad para reinicio con saludo (default `24`) |
 | `META_APP_ID` | onboarding | App ID de Meta (panel Embedded Signup) |
 | `META_EMBEDDED_SIGNUP_CONFIG_ID` | onboarding | Configuration ID de Facebook Login for Business |
 | `ONBOARDING_API_SECRET` | onboarding | Bearer para panel → `POST /api/onboarding/*` |
@@ -333,14 +335,22 @@ Si el bot sigue mostrando propiedades de compra, el chat puede tener `flow_path=
 
 ### Reinicio automático de conversación
 
-Si el cliente vuelve con un **saludo inicial** (ej. «hola», «buenos días») y se cumple alguna condición, el bot reinicia el flujo desde triage (`flow_path=nuevo`) y limpia `capture_data`:
+Al recibir un mensaje, el bot puede reiniciar el flujo desde triage (`flow_path=nuevo`) y limpiar `capture_data` (historial, perfil de búsqueda, listados, flags de visita, etc.):
 
 | Condición | Ejemplo |
 |-----------|---------|
-| Pasaron más de `SESSION_IDLE_RESTART_HOURS` (default **24**) desde el último mensaje del cliente | Tras un día sin escribir, escribe «hola» |
-| La última interacción cerró con handoff a asesor (visita confirmada, lista de espera registrada o captación completa) | Tras la confirmación de visita, escribe «hola» al rato |
+| El mensaje llega en un **día calendario posterior** al último mensaje del cliente (zona `SESSION_RESET_TIMEZONE`, default `America/Argentina/Buenos_Aires`) | Escribió ayer a las 23:00 y vuelve hoy con «quiero alquilar» o cualquier texto |
+| Saludo inicial **y** pasaron más de `SESSION_IDLE_RESTART_HOURS` (default **24**) desde el último mensaje | Mismo día calendario pero tras 24 h escribe «hola» |
+| Saludo inicial **y** la última interacción cerró con handoff a asesor (visita confirmada, lista de espera registrada o captación completa) | Tras la confirmación de visita, escribe «hola» al rato |
 
-No aplica si el mensaje trae intención de flujo en el mismo texto (ej. «hola quiero alquilar» o «opción 2»): en ese caso sigue el flujo normal. Frases explícitas tipo «empecemos de nuevo» siguen usando `user_wants_fresh_start` (cambian `flow_path` sin la lógica de saludo+24h).
+El reinicio por día calendario aplica con **cualquier** mensaje (no solo saludos). No borra `client_leads` ni `client_waitlist`.
+
+No aplica al reinicio por saludo+24h/handoff si el mensaje trae intención de flujo en el mismo texto (ej. «hola quiero alquilar» o «opción 2»): en ese caso sigue el flujo normal salvo que ya sea un día calendario posterior. Frases explícitas tipo «empecemos de nuevo» siguen usando `user_wants_fresh_start` (cambian `flow_path` sin la lógica de saludo+24h).
+
+| Variable | Descripción |
+|----------|-------------|
+| `SESSION_RESET_TIMEZONE` | Zona IANA para el corte de día del reinicio automático (default `America/Argentina/Buenos_Aires`) |
+| `SESSION_IDLE_RESTART_HOURS` | Horas de inactividad para reinicio con saludo (default `24`) |
 
 ## Leads (`client_leads`)
 

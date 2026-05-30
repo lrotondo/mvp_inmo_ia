@@ -7,9 +7,11 @@ from app.session_lifecycle import (
     get_last_inbound_at,
     had_advisor_handoff,
     is_initial_greeting,
+    is_next_calendar_day_since_last_inbound,
     is_session_idle_over_threshold,
     mark_advisor_handoff_completed,
     should_auto_restart_session,
+    should_reset_session_next_day,
     touch_last_inbound_at,
 )
 
@@ -83,3 +85,30 @@ def test_is_session_idle_over_threshold() -> None:
         now=now,
         hours=24,
     )
+
+
+def test_is_next_calendar_day_after_midnight() -> None:
+    last = datetime(2026, 5, 25, 23, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 26, 8, 0, tzinfo=timezone.utc)
+    assert is_next_calendar_day_since_last_inbound(last, now=now)
+    assert should_reset_session_next_day(last, now=now)
+
+
+def test_is_not_next_calendar_day_same_day() -> None:
+    last = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 26, 22, 0, tzinfo=timezone.utc)
+    assert not is_next_calendar_day_since_last_inbound(last, now=now)
+    assert not should_reset_session_next_day(last, now=now)
+
+
+def test_is_not_next_calendar_day_without_last_inbound() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+    assert not is_next_calendar_day_since_last_inbound(None, now=now)
+    assert not should_reset_session_next_day(None, now=now)
+
+
+def test_is_next_calendar_day_after_weekend() -> None:
+    last = datetime(2026, 5, 29, 21, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    assert is_next_calendar_day_since_last_inbound(last, now=now)
+    assert should_reset_session_next_day(last, now=now)
