@@ -9,8 +9,12 @@ from app.prompts.templates import (
 
 def test_build_triage_message() -> None:
     msg = build_triage_message("Espacios360")
+    assert "Espacios360" in msg
     assert "comprar" in msg.lower()
     assert "alquilar" in msg.lower()
+    assert "vender" in msg.lower()
+    assert "estás buscando" in msg
+    assert "👋" in msg
 
 
 def test_build_chat_system_prompt_includes_catalog() -> None:

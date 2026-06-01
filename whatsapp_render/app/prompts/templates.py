@@ -181,8 +181,9 @@ def build_waitlist_consent_question(*, catalog_exhausted: bool = False) -> str:
 def build_triage_message(tenant_name: str) -> str:
     name = (tenant_name or "").strip() or "la inmobiliaria"
     return (
-        f"Hola, soy el asistente de *{name}*. "
-        "¿Querés *comprar*, *alquilar* o *vender* una propiedad?"
+        f"¡Hola! 👋 Soy el asistente de *{name}* y estoy para ayudarte "
+        "a encontrar lo que estás buscando.\n\n"
+        "Contame, ¿estás buscando algo para *alquilar*, *comprar* o *vender*?"
     )
 
 
