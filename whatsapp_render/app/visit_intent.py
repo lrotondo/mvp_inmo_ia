@@ -68,3 +68,15 @@ def conversation_wants_visit_rent(conversation_text: str) -> bool:
 
 def conversation_requests_human(conversation_text: str) -> bool:
     return bool(_HUMAN_CONTACT_RE.search(conversation_text))
+
+
+def visit_requests_human_only(text: str, flow_path: str) -> bool:
+    """Pedido de asesor sin intención explícita de visita en el mismo mensaje."""
+    body = (text or "").strip()
+    if not body or not conversation_requests_human(body):
+        return False
+    if conversation_requests_viewing(body):
+        return False
+    if flow_path == "alquiler":
+        return not conversation_wants_visit_rent(body)
+    return not conversation_wants_visit(body)

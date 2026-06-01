@@ -19,7 +19,8 @@ _VISIT_SCHEDULE_QUESTION_TEMPLATE = (
     "¡Genial! Para que un asesor te contacte y coordinen la visita{property_part}, "
     "contame en *un solo mensaje*:\n"
     "• ¿Qué *días* te vienen bien? (entre semana, fin de semana, o fechas puntuales)\n"
-    "• ¿Preferís *mañana*, *tarde*, o no tenés preferencia de horario?"
+    "• ¿Preferís *mañana*, *tarde*, o no tenés preferencia de horario?\n"
+    "Si preferís que te llamen sin definir horario, escribí *sin horario*."
 )
 
 # Compat: plantilla histórica (confirmación + pedido de horarios en un solo mensaje).
@@ -55,6 +56,7 @@ Reglas:
 - No inventes propiedades, precios, direcciones ni barrios.
 - Prohibido usar [LISTADO:ids] o listar opciones en viñetas; el sistema envía fotos por separado.
 - No propongas fechas ni horarios exactos de visita; un asesor coordina después.
+- Si el cliente rechaza coordinar visita o pide más opciones, no confirmes interés ni digas que un asesor coordinará visita de esa propiedad.
 - En captación, pedí tipo de inmueble, ubicación y ambientes/metros si faltan.
 
 """
@@ -71,6 +73,16 @@ def build_visit_schedule_question(property_ref: str = "") -> str:
     return _VISIT_SCHEDULE_QUESTION_TEMPLATE.format(
         property_part=_visit_property_part(property_ref),
     )
+
+
+def build_visit_declined_reply() -> str:
+    return (
+        "Sin problema. Si querés, seguimos buscando o contame en qué más te puedo ayudar."
+    )
+
+
+def build_visit_cancelled_more_options_reply() -> str:
+    return "Entendido, te muestro más opciones."
 
 
 def format_visit_confirmation(property_ref: str = "") -> str:
