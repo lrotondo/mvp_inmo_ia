@@ -52,12 +52,30 @@ def test_build_property_header_lines_ficha_integration() -> None:
         "Ambientes": "1 ambientes",
     }
     lines = build_property_header_lines(row, branch="alquiler")
-    block = " | ".join(lines)
-    assert "Consultar precio" in block
-    assert "$Consultar" not in block
-    assert "1 dormitorio" in block
-    assert "1 ambiente" in block
-    assert "1 dormitorios" not in block
+    assert lines[0] == "*Giaconi 1400*"
+    assert "Depto centro" in lines[1]
+    assert "Consultar precio" in lines[1]
+    assert "$Consultar" not in "\n".join(lines)
+    assert "1 dormitorio" in lines[1]
+    assert "1 ambiente" not in lines[1]
+    assert "1 dormitorios" not in "\n".join(lines)
+
+
+def test_build_property_header_lines_listing_fontana() -> None:
+    row = {
+        "Titulo": "Hermosa casa en alquiler, espacios comodos y super luminosos",
+        "Direccion": "Fontana al 2500",
+        "Barrio": "Fontana al 2500",
+        "Precio": "1800000",
+        "Dormitorios": "3",
+        "Ambientes": "3",
+    }
+    lines = build_property_header_lines(row, option_index=2, branch="alquiler")
+    assert lines[0] == "*Opción 2, Fontana al 2500*"
+    assert "Hermosa casa" in lines[1]
+    assert "3 dormitorios" in lines[1]
+    assert "3 ambientes" not in lines[1]
+    assert "Fontana al 2500, Fontana" not in "\n".join(lines)
 
 
 def test_build_property_ficha_usd_sale() -> None:

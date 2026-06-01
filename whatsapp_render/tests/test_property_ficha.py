@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.property_ficha import (
     build_detail_media_links_block,
     build_property_ficha,
+    build_property_header_lines,
     format_caracteristicas_text,
     replace_markdown_links_with_labels,
 )
@@ -75,6 +76,9 @@ def test_build_property_ficha_uses_titulo_and_dormitorios() -> None:
         "Caracteristicas": "Pileta",
     }
     ficha = build_property_ficha(row, include_media_links=False, branch="compra")
+    lines = build_property_header_lines(row, branch="compra")
+    assert lines[0] == "*Av. Test 100*"
+    assert "Casa con pileta" in lines[1]
     assert "Casa con pileta" in ficha
     assert "3 dormitorios" in ficha
     assert "Precio: 100.000 dólares" in ficha
@@ -90,7 +94,10 @@ def test_build_listing_caption_style_without_media_links() -> None:
         "Caracteristicas": "Zona residencial | Pileta",
         "foto_principal": "https://example.com/p.jpg",
     }
-    ficha = build_property_ficha(row, include_media_links=False, option_index=1)
+    ficha = build_property_ficha(row, include_media_links=False, option_index=1, branch="alquiler")
+    lines = build_property_header_lines(row, option_index=1, branch="alquiler")
+    assert lines[0] == "*Opción 1, Don Bosco 1800*"
     assert "Opción 1" in ficha
+    assert "Don Bosco 1800" in ficha
     assert "Pileta" in ficha
     assert "Ver galería" not in ficha

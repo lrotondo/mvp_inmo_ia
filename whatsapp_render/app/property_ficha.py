@@ -58,21 +58,39 @@ def format_caracteristicas_text(raw: str, *, max_chars: int = 800) -> str:
     return block[: max_chars - 3].rstrip() + "..."
 
 
+def _dedupe_location_parts(*parts: str) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        text = (part or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
 def _ubicacion_line(row: dict[str, Any], *, branch: str | None) -> str:
     direccion = str(row.get("Direccion", "")).strip()
     if normalize_catalog_branch(branch or "") == "alquiler":
         barrio = str(row.get("Barrio", "")).strip()
-        if barrio:
-            return f"{direccion}, {barrio}" if direccion else barrio
-        return direccion
+        parts = _dedupe_location_parts(direccion, barrio)
+        return ", ".join(parts)
 
     lugar = str(row.get("Lugar", "")).strip()
     zona = str(row.get("Zona", "")).strip() or str(row.get("Barrio", "")).strip()
-    parts: list[str] = []
-    for part in (direccion, lugar, zona):
-        if part and part not in parts:
-            parts.append(part)
+    parts = _dedupe_location_parts(direccion, lugar, zona)
     return ", ".join(parts)
+
+
+def _direccion_display(row: dict[str, Any], *, branch: str | None) -> str:
+    direccion = str(row.get("Direccion", "")).strip()
+    if direccion:
+        return direccion
+    return _ubicacion_line(row, branch=branch)
 
 
 def build_property_header_lines(
@@ -83,7 +101,7 @@ def build_property_header_lines(
 ) -> list[str]:
     titulo = str(row.get("Titulo", "")).strip()
     tipo = str(row.get("Tipo", "")).strip()
-    ubicacion = _ubicacion_line(row, branch=branch)
+    direccion = _direccion_display(row, branch=branch)
 
     precio = str(row.get("Precio", "")).strip()
     dormitorios = str(row.get("Dormitorios", "")).strip()
@@ -91,45 +109,42 @@ def build_property_header_lines(
     expensas = str(row.get("Expensas", "")).strip()
     is_rent = normalize_catalog_branch(branch or "") == "alquiler"
 
-    headline = titulo or ubicacion
-    if tipo and titulo and tipo.lower() not in titulo.lower():
-        headline = f"{tipo} — {titulo}"
-    elif tipo and not titulo:
-        headline = tipo
+    lines: list[str] = []
 
     if option_index is not None:
-        if headline:
-            title = f"*Opción {option_index} — {headline}*"
+        if direccion:
+            lines.append(f"*Opción {option_index}, {direccion}*")
         else:
-            title = f"*Opción {option_index}*"
-    elif headline:
-        title = f"*{headline}*"
-    else:
-        title = ""
+            lines.append(f"*Opción {option_index}*")
+    elif direccion:
+        lines.append(f"*{direccion}*")
 
-    detail_parts: list[str] = []
-    if titulo and ubicacion and ubicacion.lower() != titulo.lower():
-        detail_parts.append(ubicacion)
+    summary: list[str] = []
+    if titulo:
+        summary.append(titulo)
+    elif tipo:
+        summary.append(tipo)
+
     precio_line = format_ficha_precio(precio, branch=branch or "")
     if precio_line:
-        detail_parts.append(precio_line)
+        summary.append(precio_line)
     if is_rent and expensas:
         if expensas.startswith("$"):
-            detail_parts.append(f"Expensas: {expensas}")
+            summary.append(f"Expensas: {expensas}")
         else:
-            detail_parts.append(f"Expensas: ${expensas}")
+            summary.append(f"Expensas: ${expensas}")
+
     dorm_line = format_ficha_dormitorios(dormitorios)
     if dorm_line:
-        detail_parts.append(dorm_line)
-    amb_line = format_ficha_ambientes(ambientes)
-    if amb_line:
-        detail_parts.append(amb_line)
+        summary.append(dorm_line)
+    else:
+        amb_line = format_ficha_ambientes(ambientes)
+        if amb_line:
+            summary.append(amb_line)
 
-    lines: list[str] = []
-    if title:
-        lines.append(title)
-    if detail_parts:
-        lines.append(" | ".join(detail_parts))
+    if summary:
+        lines.append(" | ".join(summary))
+
     return lines
 
 
