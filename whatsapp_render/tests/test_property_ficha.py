@@ -74,9 +74,10 @@ def test_build_property_ficha_uses_titulo_and_dormitorios() -> None:
         "Ambientes": "4 ambientes",
         "Caracteristicas": "Pileta",
     }
-    ficha = build_property_ficha(row, include_media_links=False)
+    ficha = build_property_ficha(row, include_media_links=False, branch="compra")
     assert "Casa con pileta" in ficha
     assert "3 dormitorios" in ficha
+    assert "Precio: 100.000 dólares" in ficha
     assert "Av. Test 100" in ficha
 
 

@@ -9,6 +9,11 @@ from app.catalog import (
     primary_photo_url,
     property_video_url,
 )
+from app.catalog_display import (
+    format_ficha_ambientes,
+    format_ficha_dormitorios,
+    format_ficha_precio,
+)
 from app.catalog_profiles import normalize_catalog_branch
 from app.media_urls import is_likely_direct_image_url, is_social_or_page_url
 
@@ -105,32 +110,20 @@ def build_property_header_lines(
     detail_parts: list[str] = []
     if titulo and ubicacion and ubicacion.lower() != titulo.lower():
         detail_parts.append(ubicacion)
-    if precio:
-        if is_rent:
-            label = "Precio mensual"
-        elif precio.upper().startswith("US$") or "usd" in precio.lower():
-            label = "Precio USD"
-        else:
-            label = "Precio"
-        if precio.startswith("$") or precio.upper().startswith("US$"):
-            detail_parts.append(f"{label}: {precio}")
-        else:
-            detail_parts.append(f"{label}: ${precio}")
+    precio_line = format_ficha_precio(precio, branch=branch or "")
+    if precio_line:
+        detail_parts.append(precio_line)
     if is_rent and expensas:
         if expensas.startswith("$"):
             detail_parts.append(f"Expensas: {expensas}")
         else:
             detail_parts.append(f"Expensas: ${expensas}")
-    if dormitorios:
-        if "dormitorio" in dormitorios.lower():
-            detail_parts.append(dormitorios)
-        else:
-            detail_parts.append(f"{dormitorios} dormitorios")
-    if ambientes:
-        if "ambiente" in ambientes.lower():
-            detail_parts.append(ambientes)
-        else:
-            detail_parts.append(f"{ambientes} ambientes")
+    dorm_line = format_ficha_dormitorios(dormitorios)
+    if dorm_line:
+        detail_parts.append(dorm_line)
+    amb_line = format_ficha_ambientes(ambientes)
+    if amb_line:
+        detail_parts.append(amb_line)
 
     lines: list[str] = []
     if title:

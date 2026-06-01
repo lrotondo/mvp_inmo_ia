@@ -114,12 +114,20 @@ def _media_flags(row: dict[str, Any]) -> str:
 
 def format_row_compact(row: dict[str, Any], branch: str) -> str:
     """Una fila del catálogo para el LLM, con campos nativos de la rama."""
+    from app.catalog_display import format_row_field_display
+
     parts: list[str] = []
     for key, label in compact_fields_for_branch(branch):
         val = str(row.get(key, "")).strip()
         if not val:
             continue
-        parts.append(f"{label}: {val}")
+        display = format_row_field_display(key, val, branch=branch)
+        if not display:
+            continue
+        if key in ("Precio", "Dormitorios", "Ambientes"):
+            parts.append(display)
+        else:
+            parts.append(f"{label}: {display}")
 
     if normalize_catalog_branch(branch) == "alquiler":
         media = _media_flags(row)
