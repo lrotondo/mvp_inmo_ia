@@ -906,6 +906,8 @@ async def handle_turn(
                 working_capture,
                 catalog_path=visit_catalog_path,
             )
+            and not user_wants_alternate_listing(user_text)
+            and not user_declines_visit(user_text)
             and not get_visit_pending(working_capture)
             and get_intake_answered(working_capture)
             and not get_waitlist_pending(working_capture)
