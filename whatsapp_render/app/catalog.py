@@ -221,7 +221,10 @@ def get_properties_by_ids(
 
 def primary_photo_url(row: dict[str, Any]) -> str:
     """Foto del resumen/listado (columna foto_principal; legacy Link_Fotos)."""
-    return str(row.get("foto_principal") or row.get("Link_Fotos") or "").strip()
+    from app.media_urls import normalize_photo_url
+
+    raw = str(row.get("foto_principal") or row.get("Link_Fotos") or "").strip()
+    return normalize_photo_url(raw)
 
 
 def gallery_photo_url(row: dict[str, Any]) -> str:
