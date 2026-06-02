@@ -701,6 +701,7 @@ async def meta_webhook_post(request: Request) -> dict[str, bool]:
                     conversation_summary=turn_result.visit_lead_conversation_summary,
                     capture_summary=capture_summary_text(capture_after_turn),
                     access_token=ctx.access_token,
+                    notify_on_update=True,
                 )
         except Exception:
             logger.exception(
