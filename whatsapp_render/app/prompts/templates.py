@@ -85,6 +85,36 @@ def build_visit_cancelled_more_options_reply() -> str:
     return "Entendido, te muestro más opciones."
 
 
+_INSTITUTIONAL_FOOTER = "¿Seguimos con la búsqueda de propiedades?"
+
+
+def build_institutional_hours_reply(hours_text: str) -> str:
+    return (
+        f"Nuestros horarios de atención son:\n{hours_text.strip()}\n\n"
+        f"{_INSTITUTIONAL_FOOTER}"
+    )
+
+
+def build_institutional_location_reply(address_text: str) -> str:
+    return (
+        f"Estamos en:\n{address_text.strip()}\n\n{_INSTITUTIONAL_FOOTER}"
+    )
+
+
+def build_institutional_social_reply(links_text: str) -> str:
+    return (
+        f"Podés encontrarnos en:\n{links_text.strip()}\n\n{_INSTITUTIONAL_FOOTER}"
+    )
+
+
+def build_institutional_missing_data_reply() -> str:
+    return (
+        "Por ahora no tengo ese dato cargado en el sistema. "
+        "Un asesor del equipo puede ayudarte con eso.\n\n"
+        f"{_INSTITUTIONAL_FOOTER}"
+    )
+
+
 def format_visit_confirmation(property_ref: str = "") -> str:
     return VISIT_CONFIRMATION_TEXT.format(
         property_part=_visit_property_part(property_ref),

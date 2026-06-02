@@ -19,6 +19,16 @@ class TenantContext:
     system_prompt: str | None
     catalog_csv_path: str | None
     catalog_rent_csv_path: str | None
+    office_hours: str | None = None
+    office_address: str | None = None
+    social_links: str | None = None
+
+
+@dataclass(frozen=True)
+class InstitutionalProfile:
+    office_hours: str | None
+    office_address: str | None
+    social_links: str | None
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,25 @@ def fetch_tenant_context(phone_number_id: str) -> TenantContext | None:
             system_prompt=row.system_prompt,
             catalog_csv_path=row.catalog_csv_path,
             catalog_rent_csv_path=rent_path,
+            office_hours=(row.office_hours or "").strip() or None,
+            office_address=(row.office_address or "").strip() or None,
+            social_links=(row.social_links or "").strip() or None,
+        )
+
+
+def fetch_institutional_profile(phone_number_id: str) -> InstitutionalProfile | None:
+    if not phone_number_id or not phone_number_id.strip():
+        return None
+    if get_engine() is None:
+        return None
+    with session_scope() as session:
+        row = get_tenant_by_phone_number_id(session, phone_number_id)
+        if row is None:
+            return None
+        return InstitutionalProfile(
+            office_hours=(row.office_hours or "").strip() or None,
+            office_address=(row.office_address or "").strip() or None,
+            social_links=(row.social_links or "").strip() or None,
         )
 
 

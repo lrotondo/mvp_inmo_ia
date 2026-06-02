@@ -36,6 +36,9 @@ class Tenant(Base):
     lead_notify_whatsapp_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True
     )
+    office_hours = mapped_column(Text, nullable=True)
+    office_address = mapped_column(Text, nullable=True)
+    social_links = mapped_column(Text, nullable=True)
 
 
 class OnboardingSession(Base):

@@ -72,6 +72,7 @@ from app.session_lifecycle import (
     had_advisor_handoff,
     mark_advisor_handoff_completed,
 )
+from app.institutional_flow import try_handle_institutional_turn
 from app.post_handoff import handle_post_handoff_turn
 from app.session_state import (
     capture_is_complete,
@@ -180,6 +181,7 @@ class Phase(str, Enum):
     WAITLIST_CONFIRM = "waitlist_confirm"
     VISIT_INTAKE = "visit_intake"
     VISIT_CONFIRM = "visit_confirm"
+    INSTITUTIONAL = "institutional"
     # Alias compat tests/logs
     WAITLIST = "waitlist_confirm"
 
@@ -814,6 +816,28 @@ async def handle_turn(
                     "search_state_reset flow=%s reason=new_search_or_type_change",
                     flow_path,
                 )
+
+    if (user_text or "").strip() and phone_number_id.strip():
+        institutional = await try_handle_institutional_turn(
+            flow_path=flow_path,
+            phone_number_id=phone_number_id,
+            user_text=user_text,
+            capture_data=working_capture,
+            wa_id=wa_id,
+        )
+        if institutional is not None:
+            inst_text, working_capture = institutional
+            return FlowResult(
+                text=inst_text,
+                phase=Phase.INSTITUTIONAL.value,
+                plan=FlowPlan(profile=None, catalog_path=None),
+                capture_data=working_capture,
+                alerts=[],
+                property_ref="",
+                catalog_path=None,
+                candidate_ids=[],
+                skip_property_delivery=True,
+            )
 
     if had_advisor_handoff(working_capture):
         (

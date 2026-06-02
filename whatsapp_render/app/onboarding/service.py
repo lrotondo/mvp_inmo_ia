@@ -439,6 +439,9 @@ def get_tenant_status(tenant_id: int) -> TenantStatusResponse | None:
             catalog_csv_path=tenant.catalog_csv_path,
             catalog_rent_csv_path=tenant.catalog_rent_csv_path,
             platform_tenant_id=tenant.platform_tenant_id,
+            office_hours=tenant.office_hours,
+            office_address=tenant.office_address,
+            social_links=tenant.social_links,
         )
 
 
@@ -455,6 +458,12 @@ def patch_tenant_config(tenant_id: int, **fields: str | None) -> TenantStatusRes
             tenant.catalog_csv_path = fields["catalog_csv_path"].strip() or None
         if fields.get("catalog_rent_csv_path") is not None:
             tenant.catalog_rent_csv_path = fields["catalog_rent_csv_path"].strip() or None
+        if fields.get("office_hours") is not None:
+            tenant.office_hours = fields["office_hours"].strip() or None
+        if fields.get("office_address") is not None:
+            tenant.office_address = fields["office_address"].strip() or None
+        if fields.get("social_links") is not None:
+            tenant.social_links = fields["social_links"].strip() or None
         session.flush()
     return get_tenant_status(tenant_id)
 

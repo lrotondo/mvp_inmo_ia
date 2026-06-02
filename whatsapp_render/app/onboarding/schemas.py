@@ -64,6 +64,9 @@ class TenantStatusResponse(BaseModel):
     catalog_csv_path: str | None
     catalog_rent_csv_path: str | None
     platform_tenant_id: int | None = None
+    office_hours: str | None = None
+    office_address: str | None = None
+    social_links: str | None = None
 
 
 class TenantConfigPatch(BaseModel):
@@ -71,3 +74,6 @@ class TenantConfigPatch(BaseModel):
     system_prompt: str | None = None
     catalog_csv_path: str | None = None
     catalog_rent_csv_path: str | None = None
+    office_hours: str | None = None
+    office_address: str | None = None
+    social_links: str | None = None
